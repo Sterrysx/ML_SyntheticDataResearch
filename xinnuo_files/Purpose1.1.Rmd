@@ -946,3 +946,144 @@ ggsave(
   dpi      = 300
 )
 ```
+
+
+# Oriol Farrés
+
+## Data Generators
+
+### Export data1
+
+```{r}
+# 1. Load necessary libraries and functions first (if not already loaded)
+library(tidyverse)
+library(synthpop)
+library(mvtnorm)
+
+# 2. Generate ONE specific dataset (e.g., N=250, p=2, k=2, sep=10)
+set.seed(123) # Set seed so it's reproducible
+rdata <- data.generation(N = 250, p = 2, rho = 0, separation = 10, k = 2)
+real.data <- rdata$Data
+
+# 3. Generate the Synthetic version (using CART)
+sdata <- synt.data.generation(real.data, m = 1, methods = "cart")
+synt.data <- sdata$`Syn data` # Extract the dataframe
+
+# 4. Export to CSV
+# Make sure the 'data' folder exists, or just save to root: "original_data.csv"
+write.csv(real.data, file = "../data/1/original_data.csv", row.names = FALSE)
+write.csv(synt.data, file = "../data/1/synthetic_data.csv", row.names = FALSE)
+
+message("Files exported successfully to the data/ folder.")
+```
+
+``` {r}
+# 1. Load Required Libraries
+if (!require("mvtnorm")) install.packages("mvtnorm")
+if (!require("synthpop")) install.packages("synthpop")
+if (!require("dplyr")) install.packages("dplyr")
+
+library(mvtnorm)
+library(synthpop)
+library(dplyr)
+
+# ==========================================
+# 2. Define Functions (From your original code)
+# ==========================================
+
+centroid.generation <- function(k, p, separation) {
+  centroids <- matrix(NA, nrow = k, ncol = p)
+  centroids[1, ] <- rep(0, p)  # First centroid at origin
+  
+  for (i in 2:k) {
+    tries <- 0
+    repeat {
+      vector <- rnorm(p)
+      vector <- vector / sqrt(sum(vector^2))  # Normalize vector
+      vector <- vector * separation           # Scale to separation distance
+      
+      # Calculate distances to existing centroids
+      dists <- sqrt(rowSums((centroids[1:(i - 1), , drop = FALSE] - 
+                             matrix(vector, nrow = i - 1, ncol = p, byrow = TRUE))^2))
+      
+      if (all(dists >= separation)) {
+        centroids[i, ] <- vector
+        break
+      }
+      tries <- tries + 1
+      if (tries > 1000) stop("Could not generate separated centroids.")
+    }
+  }
+  return(centroids)
+}
+
+data.generation <- function(N, p, rho, separation, k){
+  # Generate Centroids
+  centroids <- centroid.generation(k = k, p = p, separation = separation)
+  
+  # Covariance Matrix
+  R <- matrix(rho, nrow = p, ncol = p)
+  diag(R) <- 1
+  sd <- rep(1, p)
+  D <- diag(sd)
+  Sigma <- D %*% R %*% D
+  
+  # Generate Clusters
+  n <- round(N/k, digits = 0)
+  clusters <- lapply(1:k, function(i) {
+    rmvnorm(n, mean = centroids[i, ], sigma = Sigma)
+  })
+  
+  data <- do.call(rbind, clusters)
+  data <- data.frame(data, group = factor(rep(1:k, each = n)))
+  
+  return(list("Data" = data))
+}
+
+synt.data.generation <- function(real.data, m, method){
+    # We use proper = TRUE to ensure full synthetic data generation logic
+    syn.obj <- syn(real.data, method = method, m = m, print.flag = FALSE)
+    return(syn.obj$syn)
+}
+
+# ==========================================
+# 3. Execution and Export
+# ==========================================
+
+# Create 'data' folder if it doesn't exist
+if (!dir.exists("data")) {
+  dir.create("data")
+}
+
+# Parameters (Dataset 1 Configuration)
+set.seed(123)
+N <- 250
+p <- 2
+rho <- 0.0
+separation <- 10
+k <- 2
+method <- "cart"
+
+# 1. Generate Real Data
+cat("Generating Real Data...\n")
+rdata_obj <- data.generation(N = N, p = p, rho = rho, separation = separation, k = k)
+real.data <- rdata_obj$Data
+
+# 2. Generate Synthetic Data
+cat("Generating Synthetic Data (CART)...\n")
+synt.data <- synt.data.generation(real.data, m = 1, method = method)
+
+# 3. Export to CSV
+output_dir <- "../data/2"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE) # recursive=TRUE creates parent folders if needed
+}
+
+# Note: We remove row names to keep the CSV clean for Python
+write.csv(real.data, file = "../data/2/original_data.csv", row.names = FALSE)
+write.csv(synt.data, file = "../data/2/synthetic_data.csv", row.names = FALSE)
+
+cat("Success! Files saved to:\n")
+cat(" - data/2/original_data.csv\n")
+cat(" - data/2/synthetic_data.csv\n")
+```
