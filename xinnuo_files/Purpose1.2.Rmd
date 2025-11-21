@@ -25,6 +25,7 @@ library(scales)
 library(tidyr)        # pivot_longer
 library(mvtnorm)
 library(parallel)
+library(pbapply)
 library(patchwork)
 
 synt.data.generation <- function(real.data, m, methods){
@@ -286,7 +287,7 @@ cluter.graph <- ggplot() +
                    colour = set),
                type  = "euclid",
                level = 1,
-               linewdth = 1,
+               linewidth = 1,
                alpha = .25) +
 
   scale_colour_manual(values = c(Real = real.col, Synt = synt.col),
@@ -409,9 +410,10 @@ for(i in separation){
 
 plots
 
-layout <- ((plots[[1]]  | plots[[2]]  | plots[[3]]) /
-            (plots[[4]]  | plots[[5]]  | plots[[6]] ) /
-            (plots[[7]]  | plots[[8]]  | plots[[9]] ))
+layout <- ((plots[["sep2_k2"]]  | plots[["sep2_k3"]]  | plots[["sep2_k4"]]) /
+            (plots[["sep6_k2"]]  | plots[["sep6_k3"]]  | plots[["sep6_k4"]] ) /
+            (plots[["sep10_k2"]] | plots[["sep10_k3"]] | plots[["sep10_k4"]] ))
+
 
 print(layout)
 
@@ -456,12 +458,13 @@ for(i in separation){
 
       ntry <- ntry + 1
       if (ntry >= max_try) {
-        warning(sprintf("sep=%s, k=%s: no match after % attempts.", i, j, max_try))
+        warning(sprintf("sep=%s, k=%s: no match after %d attempts.", i, j, max_try))
         break
       }
     }
 
-    if (real.k != synt.k) next
+    # Skip if conditions not met (either no match found or max tries reached)
+    if ((real.k != synt.k) || (real.k != j)) next
 
     real.km <- kmeans(real.data, real.k, nstart = 25)
     synt.km <- kmeans(synt.data, synt.k, nstart = 25)
@@ -476,7 +479,7 @@ for(i in separation){
     gname <- sprintf("sep%s_k%s", i, j)
     data.list[[gname]] <- list(data = df.all, title = sprintf("%sSD separation & %s cluster", i, j))
 
-# Uncaled individual graphs
+    # Uncaled individual graphs
     centres <- df.all %>%
       group_by(set, cluster) %>%
       summarise(cx = mean(X1), cy = mean(X2), .groups = "drop")
@@ -517,90 +520,102 @@ for(i in separation){
   }
 }
 
-layout_original <- (plots[[1]] | plots[[2]] | plots[[3]]) /
-                   (plots[[4]] | plots[[5]] | plots[[6]]) /
-                   (plots[[7]] | plots[[8]] | plots[[9]])
+required_layout <- c("sep2_k2", "sep2_k3", "sep2_k4",
+                     "sep6_k2", "sep6_k3", "sep6_k4",
+                     "sep10_k2", "sep10_k3", "sep10_k4")
+missing_layout <- setdiff(required_layout, names(plots))
+
+if(length(missing_layout) == 0){
+  layout_original <- (plots[["sep2_k2"]] | plots[["sep2_k3"]] | plots[["sep2_k4"]]) /
+                     (plots[["sep6_k2"]] | plots[["sep6_k3"]] | plots[["sep6_k4"]]) /
+                     (plots[["sep10_k2"]] | plots[["sep10_k3"]] | plots[["sep10_k4"]])
+  ggsave(
+    filename = "Real_VS_Synthetic.png",
+    plot     = layout_original,
+    width    = 27,
+    height   = 15,
+    dpi      = 300
+  )
+} else {
+  message("Skipping full layout; missing plots: ", paste(missing_layout, collapse = ", "))
+}
 
 
 # Extrem graphics rescaled
-selected_ids <- c(1, 3, 7, 9)
-selected_names <- names(plots)[selected_ids]
+selected_names <- c("sep2_k2", "sep2_k4", "sep6_k2", "sep10_k4")
+missing_rescaled <- setdiff(selected_names, names(plots))
 
-x_range <- c(Inf, -Inf)
-y_range <- c(Inf, -Inf)
+if(length(missing_rescaled) == 0){
+  x_range <- c(Inf, -Inf)
+  y_range <- c(Inf, -Inf)
 
-for(gname in selected_names) {
-  df <- data.list[[gname]]$data
-  x_range[1] <- min(x_range[1], min(df$X1))
-  x_range[2] <- max(x_range[2], max(df$X1))
-  y_range[1] <- min(y_range[1], min(df$X2))
-  y_range[2] <- max(y_range[2], max(df$X2))
+  for(gname in selected_names) {
+    df <- data.list[[gname]]$data
+    x_range[1] <- min(x_range[1], min(df$X1))
+    x_range[2] <- max(x_range[2], max(df$X1))
+    y_range[1] <- min(y_range[1], min(df$X2))
+    y_range[2] <- max(y_range[2], max(df$X2))
+  }
+
+  plots_rescaled <- list()
+
+  for(gname in selected_names) {
+    df.all <- data.list[[gname]]$data
+    title  <- data.list[[gname]]$title
+
+    centres <- df.all %>%
+      group_by(set, cluster) %>%
+      summarise(cx = mean(X1), cy = mean(X2), .groups = "drop")
+
+    segments <- df.all %>% left_join(centres, by = c("set", "cluster"))
+
+    real.col <- "#3182bd"
+    synt.col <- "#e6550d"
+
+    p <- ggplot() +
+      geom_segment(data = segments,
+                   aes(x = X1, y = X2, xend = cx, yend = cy,
+                       colour = set),
+                   linewidth = .3, alpha = .55) +
+      geom_point(data = df.all,
+                 aes(X1, X2, colour = set, shape = cluster),
+                 size = .5) +
+      stat_ellipse(data  = df.all,
+                   aes(X1, X2,
+                       group  = interaction(set, cluster),
+                       colour = set),
+                   type = "euclid",
+                   level = 1,
+                   linewidth = 1,
+                   alpha = .25) +
+      scale_colour_manual(values = c(Real = real.col, Synt = synt.col),
+                          name = "Data type") +
+      scale_fill_manual(values = c(Real = alpha(real.col, .25),
+                                   Synt = alpha(synt.col, .25)),
+                        guide = "none") +
+      scale_shape_manual(values = c(`1` = 16, `2` = 17, `3` = 15, `4` = 3)) +
+      labs(title = title,
+           x = "X1", y = "X2",
+           shape = "Cluster group") +
+      coord_cartesian(xlim = x_range, ylim = y_range) +
+      theme_minimal(base_size = 13)
+
+    plots_rescaled[[gname]] <- p
+  }
+
+  layout_rescaled <- (plots_rescaled[["sep2_k2"]] | plots_rescaled[["sep2_k4"]]) /
+                     (plots_rescaled[["sep6_k2"]] | plots_rescaled[["sep10_k4"]]) 
+
+  ggsave(
+    filename = "Real_VS_Synthetic_scaled.png",
+    plot     = layout_rescaled,
+    width    = 27,
+    height   = 15,
+    dpi      = 300
+  )
+} else {
+  message("Skipping rescaled layout; missing plots: ", paste(missing_rescaled, collapse = ", "))
 }
-
-plots_rescaled <- list()
-
-for(gname in selected_names) {
-  df.all <- data.list[[gname]]$data
-  title  <- data.list[[gname]]$title
-
-  centres <- df.all %>%
-    group_by(set, cluster) %>%
-    summarise(cx = mean(X1), cy = mean(X2), .groups = "drop")
-
-  segments <- df.all %>% left_join(centres, by = c("set", "cluster"))
-
-  real.col <- "#3182bd"
-  synt.col <- "#e6550d"
-
-  p <- ggplot() +
-    geom_segment(data = segments,
-                 aes(x = X1, y = X2, xend = cx, yend = cy,
-                     colour = set),
-                 linewidth = .3, alpha = .55) +
-    geom_point(data = df.all,
-               aes(X1, X2, colour = set, shape = cluster),
-               size = .5) +
-    stat_ellipse(data  = df.all,
-                 aes(X1, X2,
-                     group  = interaction(set, cluster),
-                     colour = set),
-                 type = "euclid",
-                 level = 1,
-                 linewidth = 1,
-                 alpha = .25) +
-    scale_colour_manual(values = c(Real = real.col, Synt = synt.col),
-                        name = "Data type") +
-    scale_fill_manual(values = c(Real = alpha(real.col, .25),
-                                 Synt = alpha(synt.col, .25)),
-                      guide = "none") +
-    scale_shape_manual(values = c(`1` = 16, `2` = 17, `3` = 15, `4` = 3)) +
-    labs(title = title,
-         x = "X1", y = "X2",
-         shape = "Cluster group") +
-    coord_cartesian(xlim = x_range, ylim = y_range) +
-    theme_minimal(base_size = 13)
-
-  plots_rescaled[[gname]] <- p
-}
-
-layout_rescaled <- (plots_rescaled[[1]] | plots_rescaled[[2]]) /
-                   (plots_rescaled[[3]] | plots_rescaled[[4]]) 
-
-ggsave(
-  filename = "Real_VS_Synthetic.png",
-  plot     = layout_original,
-  width    = 27,
-  height   = 15,
-  dpi      = 300
-)
-
-ggsave(
-  filename = "Real_VS_Synthetic_scaled.png",
-  plot     = layout_rescaled,
-  width    = 27,
-  height   = 15,
-  dpi      = 300
-)
 ```
 
 
@@ -608,7 +623,7 @@ ggsave(
 
 ## All metrics
 ```{r}
-simulate_one <- function(factor.combination) # Calcul function for each combination
+simulate_one <- function(factor.combination, max_attempts = 200L, verbose = TRUE) # Calcul function for each combination
 {
   N <- factor.combination$N
   p <- factor.combination$p
@@ -618,22 +633,31 @@ simulate_one <- function(factor.combination) # Calcul function for each combinat
   separation <- factor.combination$separation
   total.m <- total.m
   
-  count <- 0
-  repeat{
-    set.seed(count)
-    real.data <- data.generation(N, p, rho, separation, k)$Data
+  kd <- NULL
+  k.real <- NA_integer_
+  km.real <- NULL
+  found_real <- FALSE
   
-    kd        <- k.decision(real.data, synthetic = FALSE)
-    k.real    <- kd$`K optim`
-    if(k.real == k) break
-    
-    count <- count + 1
-    if(count >= total.m){
-      warning("No combination of data with %k number of clusters found")
+  for(attempt in seq_len(max_attempts)) {
+    set.seed(attempt)
+    real.data <- data.generation(N, p, rho, separation, k)$Data
+    kd <- k.decision(real.data, synthetic = FALSE)
+    k.real <- kd$`K optim`
+    if(k.real == k) {
+      km.real <- kd$Clustering
+      found_real <- TRUE
+      break
     }
   }
   
-  km.real   <- kd$Clustering
+  if(!found_real) {
+    if(verbose) {
+      warning(sprintf("simulate_one: Max attempts (%d) reached without matching k=%s for N=%s, p=%s, separation=%s.",
+                      max_attempts, k, N, p, separation))
+    }
+    return(NULL)
+  }
+  
   vars <- names(real.data)
   
   gini.real <- Gini(km.real$size)
@@ -644,26 +668,55 @@ simulate_one <- function(factor.combination) # Calcul function for each combinat
   
   out <- data.frame()
   
-  # Synthetic data generation
-  count <- 0
-  m <- 0
+  # Synthetic data generation - FIXED ITERATION APPROACH
+  n_simulations <- total.m
+  successes <- 0
+  
   synt.data <- list()
   km.synt <- list()
   k.synt <- numeric()
   speck <- numeric()
-  while(m < total.m){
-    set.seed(m + count)
-    count <- count + 1
+  successful_indices <- integer()
+  
+  for (i in 1:n_simulations) {
+    set.seed(i)
     syn   <- synt.data.generation(real.data, m = 1, methods = method)
     clust <- k.decision(syn$`Syn data`, k.real = k.real)
+    
     if(!is.null(clust)){
-      m <- m + 1
-      synt.data[[m]] <- syn$`Syn data`
-      km.synt[[m]] <- clust$Clustering
-      k.synt[m] <- clust$`K optim`
-      speck[m] <- syn$Specks$SPECKS
+      successes <- successes + 1
+      successful_indices <- c(successful_indices, i)
+      synt.data[[successes]] <- syn$`Syn data`
+      km.synt[[successes]] <- clust$Clustering
+      k.synt[successes] <- clust$`K optim`
+      speck[successes] <- syn$Specks$SPECKS
     }
   }
+  
+  # Store the proportion of successful matches
+  success_rate <- successes / n_simulations
+  
+  if (successes == 0) {
+    # If no successful matches, return a minimal result with 0% success
+    out <- data.frame(N = N,
+                     p = p,
+                     k = k,
+                     rho = rho,
+                     method = method,
+                     separation = separation,
+                     k.real = k.real,
+                     Speck = NA,
+                     success_rate = 0,
+                     Gini.real = gini.real,
+                     Gini.synt = NA,
+                     Sil.real = sil.real,
+                     Sil.synt = NA,
+                     Mean.distance = NA,
+                     Mean.var = NA)
+    return(out)
+  }
+  
+  m <- successes
   
   ls.km.synt <- lapply(km.synt, label.switching, km.real) # Synthetic data after label switching
   
@@ -722,7 +775,7 @@ simulate_one <- function(factor.combination) # Calcul function for each combinat
                separation = rep(separation, m),
                k.real = rep(k.real, m),
                Speck = speck,
-               count = rep(count, m),
+               success_rate = rep(success_rate, m),
                Gini.real = rep(gini.real, m),
                Gini.synt = gini.syn,
                Sil.real = rep(sil.real, m),
@@ -762,13 +815,14 @@ clusterExport(cl, # functions
 
 
 clusterSetRNGStream(cl, iseed = 123)
+pboptions(type = "timer")
 
 method <- c("norm")
 N <- c(50)
 p <- c(2, 5)
 rho <- c(0)
 k <- c(2, 3)
-separation <- c(2, 10)
+separation <- c(0.1, 2, 10)
 
 param.grid <- expand.grid(N = N, # all possible combinations
                           p = p,
@@ -779,21 +833,88 @@ param.grid <- expand.grid(N = N, # all possible combinations
                           KEEP.OUT.ATTRS = FALSE)
 
 
-result.list <- parLapply(
-  cl,
+result.list <- pblapply(
   X   = split(param.grid, seq_len(nrow(param.grid))),
-  fun = simulate_one
+  cl  = cl,
+  FUN = simulate_one
 )
 
-result_norm_50_allmetrics <- do.call(rbind, result.list)
+result.list <- Filter(Negate(is.null), result.list)
+if (!length(result.list)) {
+  stop("simulate_one returned no successful results for the specified grid.")
+}
+result_norm_50_allmetrics <- dplyr::bind_rows(result.list)
 
 stopCluster(cl)
+
 ```
+
+
+
+```{r}
+if(!exists("result_cart_50_allmetrics")){
+  n.cores <- detectCores() - 1
+  cl <- makeCluster(n.cores)
+  total.m <- 50
+  
+  clusterEvalQ(cl, {
+    library(mvtnorm)
+    library(NbClust)
+    library(synthpop)
+    library(clue)
+    library(DescTools)
+    library(factoextra)
+    library(cluster)
+  })
+  
+  clusterExport(cl,
+    varlist = c("simulate_one",
+                "data.generation",
+                "centroid.generation",
+                "synt.data.generation",
+                "k.decision",
+                "label.switching",
+                "specks.correct",
+                "total.m"),
+    envir = .GlobalEnv)
+  
+  clusterSetRNGStream(cl, iseed = 123)
+  pboptions(type = "timer")
+  
+  method <- c("cart")
+  N <- c(50)
+  p <- c(2, 5)
+  rho <- c(0)
+  k <- c(2, 3)
+  separation <- c(2, 10)
+  
+  param.grid <- expand.grid(N = N,
+                            p = p,
+                            k = k,
+                            rho = rho,
+                            method = method,
+                            separation = separation,
+                            KEEP.OUT.ATTRS = FALSE)
+  
+  result.list <- pblapply(
+    X   = split(param.grid, seq_len(nrow(param.grid))),
+    cl  = cl,
+    FUN = simulate_one
+  )
+  
+  result.list <- Filter(Negate(is.null), result.list)
+  if (!length(result.list)) {
+    stop("simulate_one returned no successful results for the specified grid.")
+  }
+  result_cart_50_allmetrics <- dplyr::bind_rows(result.list)
+  stopCluster(cl)
+}
+
 
 
 ## Univariante analysis
 #### Separation
-```{r}
+
 result <- result_cart_50_allmetrics
 
 result <- result %>%
@@ -856,10 +977,10 @@ print(distance.sil)
 print(distance.mean)
 print(distance.var)
 print(distance.speck)
-```
+
 
 #### Cluster
-```{r}
+
 clusternum <- result %>%
   mutate(separation = factor(k,
                              levels = sort(unique(k)),
@@ -913,10 +1034,8 @@ print(clusternum.mean)
 print(clusternum.var)
 print(clusternum.speck)
 
-```
 
 #### p
-```{r}
 variable <- result %>%
   mutate(separation = factor(p,
                              levels = sort(unique(p)),
@@ -969,10 +1088,9 @@ print(variable.sil)
 print(variable.mean)
 print(variable.var)
 print(variable.speck)
-```
+
 
 #### Correlation
-```{r}
 correlation <- result %>%
   mutate(separation = factor(rho,
                              levels = sort(unique(rho)),
@@ -1024,12 +1142,12 @@ print(correlation.sil)
 print(correlation.mean)
 print(correlation.var)
 print(correlation.speck)
-```
+
 
 
 
 ### Graphic matriz
-```{r}
+
 layout.metric <- ((distance.gini  | clusternum.gini  | variable.gini  | correlation.gini) /
                   (distance.sil  | clusternum.sil  | variable.sil  | correlation.sil) /
                   (distance.mean  | clusternum.mean  | variable.mean  | correlation.mean) /
@@ -1046,10 +1164,22 @@ ggsave(
   height   = 6,
   dpi      = 300
 )
-```
+
 
 ### Method comparison
-```{r}
+
+# Ensure both datasets have the same column structure
+if("count" %in% names(result_norm_50_allmetrics) && !"success_rate" %in% names(result_norm_50_allmetrics)) {
+  result_norm_50_allmetrics <- result_norm_50_allmetrics %>%
+    mutate(success_rate = 50 / count) %>%
+    select(-count)
+}
+if("count" %in% names(result_cart_50_allmetrics) && !"success_rate" %in% names(result_cart_50_allmetrics)) {
+  result_cart_50_allmetrics <- result_cart_50_allmetrics %>%
+    mutate(success_rate = 50 / count) %>%
+    select(-count)
+}
+
 result <- rbind(result_norm_50_allmetrics, result_cart_50_allmetrics)
 
 result <- result %>%
@@ -1108,10 +1238,10 @@ ggsave(
   height   = 6,
   dpi      = 300
 )
-```
+
 ### Sil according to method
-We see in the previous part that the behaviours for both methods are really similar, except for the silhouette value, which will be analyzed more deeply in this section.
-```{r}
+
+
 # cart
 result <- result_cart_50_allmetrics
 
@@ -1219,18 +1349,9 @@ print(layout)
 #   height   = 5, 
 #   dpi      = 300 
 # )
-```
-
-### Some results
--   Correlation is not relevant.
--   Method is not really relevant, do have some effect on silhouette. "Norm" method require more computation cost.
 
 
-# (3). Gini for unbalances cluster
-In the graphic representation for all analyzed metrics, we saw for the gini metric, the associate boxplot is always situated under 0. A possible explanation for this behavior is that the real data set is created based on balanced clusters. In this section unbalanced dataset groups will be create. 
 
-## Function for unbalanced data generation
-```{r}
 data.generation.nobalance <- function(N, p, rho, separation, k){
   # Centroid positions
   centroids <- centroid.generation(k = k, p = p, separation = separation)
@@ -1275,11 +1396,8 @@ data.generation.nobalance <- function(N, p, rho, separation, k){
   
   result <- list("Data" = data[ , -ncol(data)], "Graphic" = Graphic, "Clusters" = clusters)
 }
-```
 
-## Test
-```{r}
-simulate_one <- function(factor.combination)
+simulate_unbalanced <- function(factor.combination)
 {
   N <- factor.combination$N
   p <- factor.combination$p
@@ -1391,7 +1509,7 @@ clusterEvalQ(cl, {
 
 
 clusterExport(cl, # functions
-  varlist = c("simulate_one",
+  varlist = c("simulate_unbalanced",
               "data.generation.nobalance",
               "centroid.generation",
               "synt.data.generation",
@@ -1422,7 +1540,7 @@ param.grid <- expand.grid(N = N,
 result.list <- parLapply(
   cl,
   X   = split(param.grid, seq_len(nrow(param.grid))),
-  fun = simulate_one
+  fun = simulate_unbalanced
 )
 
 result_gininobalance <- do.call(rbind, result.list)
@@ -1432,10 +1550,7 @@ result <- result %>%
   mutate(Diff.gini = Gini.real - Gini.synt)
 
 stopCluster(cl)
-```
 
-## Graphic
-```{r}
 ###### Separation ######
 distance <- result %>%
   mutate(separation = factor(separation,
@@ -1540,17 +1655,117 @@ layout <- ((distance.speck  | clusternum.speck  | variable.speck) /
   plot_annotation(title = "Unbalanced clusters")
 
 print(layout)
-```
 
-# (4). Count
-```{r}
-result <- result_cart_250
+desired_separation <- c(0.1, 2, 6, 10)
+needs_cart_refresh <- TRUE
 
-# Data summary according to count
+if(exists("result_cart_250")){
+  current_separation <- sort(unique(result_cart_250$separation))
+  needs_cart_refresh <- !all(desired_separation %in% current_separation)
+}
+
+if(needs_cart_refresh){
+  n.cores <- detectCores() - 1
+  cl <- makeCluster(n.cores)
+  total.m <- 50
+  
+  clusterEvalQ(cl, {
+    library(mvtnorm)
+    library(NbClust)
+    library(synthpop)
+    library(clue)
+    library(DescTools)
+    library(factoextra)
+    library(cluster)
+  })
+  
+  clusterExport(cl,
+    varlist = c("simulate_one",
+                "data.generation",
+                "centroid.generation",
+                "synt.data.generation",
+                "k.decision",
+                "label.switching",
+                "specks.correct",
+                "total.m"),
+    envir = .GlobalEnv)
+  
+  clusterSetRNGStream(cl, iseed = 123)
+  pboptions(type = "timer")  # Enable ETA progress bar
+  
+  method <- c("cart")
+  N <- c(250)
+  p <- c(2, 5, 10)
+  rho <- c(0.4)
+  k <- c(2, 3, 4)
+  separation <- desired_separation
+  
+  param.grid <- expand.grid(N = N,
+                            p = p,
+                            k = k,
+                            rho = rho,
+                            method = method,
+                            separation = separation,
+                            KEEP.OUT.ATTRS = FALSE)
+  
+  result.list <- pblapply(
+    X   = split(param.grid, seq_len(nrow(param.grid))),
+    cl  = cl,
+    FUN = simulate_one
+  )
+  
+  # Filter out NULL results from combinations that never converged within max attempts
+  result.list <- Filter(Negate(is.null), result.list)
+  if (!length(result.list)) {
+    stop("simulate_one returned no successful results for the specified grid.")
+  }
+  
+  result_cart_250 <- dplyr::bind_rows(result.list)
+  stopCluster(cl)
+}
+
+result <- result_cart_250 %>%
+  dplyr::filter(separation %in% desired_separation)
+
+if(!"success_rate" %in% names(result)) {
+  total_simulations <- if (exists("total.m", inherits = FALSE)) get("total.m") else 50
+  group_cols <- intersect(c("N", "p", "k", "rho", "method", "separation", "k.real"), names(result))
+  has_count <- "count" %in% names(result)
+
+  if(length(group_cols)) {
+    result <- result %>%
+      group_by(across(all_of(group_cols))) %>%
+      mutate(success_rate = {
+        rate <- if (has_count) {
+          pmin(total_simulations / dplyr::first(count), 1)
+        } else if (all(is.na(Speck))) {
+          0
+        } else if (total_simulations > 0) {
+          dplyr::n() / total_simulations
+        } else {
+          NA_real_
+        }
+        rep(rate, dplyr::n())
+      }) %>%
+      ungroup()
+  } else {
+    # Fallback when grouping columns are unavailable; preserve row count
+    result <- result %>%
+      mutate(success_rate = if (has_count && total_simulations > 0) {
+        pmin(total_simulations / count, 1)
+      } else {
+        NA_real_
+      })
+  }
+
+  result_cart_250 <- result
+}
+
+# Data summary according to success rate
 count.sum <- result %>%                               
-  mutate(success = 50 / count) %>%
-  select(N, p, k, separation, success) %>%
-  distinct
+  select(N, p, k, separation, success_rate) %>%
+  distinct() %>%
+  rename(success = success_rate)
 
 # Compress according to k
 count.sum.k <- count.sum %>% 
@@ -1560,13 +1775,19 @@ count.sum.k <- count.sum %>%
   arrange(N, p, separation)
 
 # Heatmap
-count.plot <- ggplot(count.sum, aes(x = factor(separation),
-                y = factor(p),
-                fill = success)) +
+count.plot <- count.sum %>%
+  mutate(
+    separation = factor(separation, levels = desired_separation),
+    p = factor(p, levels = c(2, 5, 10)),
+    k = factor(k, levels = c(2, 3, 4))
+  ) %>%
+  ggplot(aes(x = separation,
+             y = p,
+             fill = success)) +
   geom_tile(colour = "grey70") +
   geom_text(aes(label = sprintf("%.3f", success)),
             color = "black", size = 2) +
-  facet_grid( ~ k, labeller = labeller(k = function(x) paste("Cluster:", x))) +
+  facet_grid(~ k, labeller = labeller(k = function(x) paste("Cluster:", x))) +
   scale_fill_gradient(
     name  = " ",
     limits = c(0, 1),
@@ -1580,6 +1801,16 @@ count.plot <- ggplot(count.sum, aes(x = factor(separation),
   theme_minimal(base_size = 12) +
   theme(panel.grid = element_blank(),
         strip.text = element_text(face = "bold"))
+
+print(count.plot)
+
+ggsave(
+  filename = "cluster_number_matching_proportion.png",
+  plot     = count.plot,
+  width    = 8,
+  height   = 4,
+  dpi      = 300
+)
 ```
 
 
