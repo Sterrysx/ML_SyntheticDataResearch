@@ -1667,7 +1667,7 @@ if(exists("result_cart_250")){
 if(needs_cart_refresh){
   n.cores <- detectCores() - 1
   cl <- makeCluster(n.cores)
-  total.m <- 50
+  total.m <- 1000
   
   clusterEvalQ(cl, {
     library(mvtnorm)
@@ -1696,7 +1696,7 @@ if(needs_cart_refresh){
   method <- c("cart")
   N <- c(250)
   p <- c(2, 5, 10)
-  rho <- c(0.4)
+  rho <- c(0)
   k <- c(2, 3, 4)
   separation <- desired_separation
   
@@ -1727,8 +1727,11 @@ if(needs_cart_refresh){
 result <- result_cart_250 %>%
   dplyr::filter(separation %in% desired_separation)
 
+
+# Use the actual simulation count from total.m
+total_simulations <- total.m
+
 if(!"success_rate" %in% names(result)) {
-  total_simulations <- if (exists("total.m", inherits = FALSE)) get("total.m") else 50
   group_cols <- intersect(c("N", "p", "k", "rho", "method", "separation", "k.real"), names(result))
   has_count <- "count" %in% names(result)
 
@@ -1775,40 +1778,69 @@ count.sum.k <- count.sum %>%
   arrange(N, p, separation)
 
 # Heatmap
+# ... (Keep your existing data preparation code up to count.sum) ...
+
+# Heatmap
 count.plot <- count.sum %>%
   mutate(
     separation = factor(separation, levels = desired_separation),
+    # Ensure p is ordered 2, 5, 10 so 2 appears at the bottom
     p = factor(p, levels = c(2, 5, 10)),
     k = factor(k, levels = c(2, 3, 4))
   ) %>%
   ggplot(aes(x = separation,
              y = p,
              fill = success)) +
-  geom_tile(colour = "grey70") +
+  # 1. Add white borders (color = "white") to simulate the grid lines
+  geom_tile(color = "white", linewidth = 0.5) +
+  
+  # 2. Adjust text size (size = 2.5 is closer to the target image)
   geom_text(aes(label = sprintf("%.3f", success)),
-            color = "black", size = 2) +
+            color = "black", size = 2.5) +
+  
   facet_grid(~ k, labeller = labeller(k = function(x) paste("Cluster:", x))) +
-  scale_fill_gradient(
+  
+  # 3. Use distinct Blues palette to match the target image style
+  # 'distiller' creates a nice gradient automatically from the Brewer palette
+  scale_fill_distiller(
+    palette = "Blues", 
+    direction = 1,       # 1 for light->dark
     name  = " ",
     limits = c(0, 1),
     breaks = c(0, .25, .5, .75, 1),
-    labels = scales::percent_format(accuracy = 1),
-    low    = "#A5CFE9",
-    high   = "#2A5783"
+    labels = scales::percent_format(accuracy = 1)
   ) +
-  labs(x = "Separation", y = "Variables"
-       ) +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid = element_blank(),
-        strip.text = element_text(face = "bold"))
+  
+  labs(x = "Separation", y = "Variables") +
+  
+  # 4. Theme adjustments to clean up the look
+  theme_minimal(base_size = 14) + 
+  theme(
+    panel.grid = element_blank(),       # Remove grid lines
+    panel.border = element_blank(),     # Remove panel borders
+    axis.ticks = element_blank(),       # Remove axis ticks
+    
+    # Bold cluster titles, remove grey background box
+    strip.text = element_text(face = "bold", size = 14, color = "black"),
+    strip.background = element_blank(),
+    
+    # Axis labels styling
+    axis.title = element_text(size = 16, face = "plain"),
+    axis.text = element_text(color = "grey30"),
+    
+    # Legend styling
+    legend.position = "right",
+    legend.key.height = unit(1.5, "cm"), # Make the legend bar taller
+    legend.text = element_text(size = 12)
+  )
 
 print(count.plot)
 
 ggsave(
   filename = "cluster_number_matching_proportion.png",
   plot     = count.plot,
-  width    = 8,
-  height   = 4,
+  width    = 9,     # Slightly wider to allow breathing room
+  height   = 5,
   dpi      = 300
 )
 ```
