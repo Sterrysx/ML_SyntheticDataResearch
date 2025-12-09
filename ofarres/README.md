@@ -2,6 +2,30 @@
 
 **Complete 3-Step ML Research Pipeline for Comparing K-Means and Hierarchical Clustering on Synthetic Data**
 
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-success)]()
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)]()
+[![R](https://img.shields.io/badge/R-4.0%2B-blue)]()
+
+---
+
+## 🚀 Quick Start
+
+```bash
+# 1. Install dependencies
+Rscript install_requirements.R
+pip install -r requirements.txt
+
+# 2. Verify setup
+./verify_setup.sh
+
+# 3. Run pipeline
+./run_all.sh
+```
+
+**Total time:** ~15-20 minutes | **Output:** 1,800 datasets analyzed, 3 publication plots
+
+📖 **New here?** Start with **[SETUP.md](SETUP.md)** for complete installation instructions.
+
 ---
 
 ## 📋 Overview

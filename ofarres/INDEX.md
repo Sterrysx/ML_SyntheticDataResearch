@@ -8,6 +8,9 @@ Welcome! This index helps you navigate the project documentation.
 
 ## 🚀 Getting Started (Choose Your Path)
 
+### I need to install dependencies first
+→ **[SETUP.md](SETUP.md)** - Complete installation guide, environment setup, troubleshooting
+
 ### I want to run the pipeline immediately
 → **[QUICKSTART.md](QUICKSTART.md)** - Commands, quick reference, troubleshooting
 
@@ -29,6 +32,7 @@ Welcome! This index helps you navigate the project documentation.
 
 | File | Length | Purpose | Best For |
 |------|--------|---------|----------|
+| **SETUP.md** | 8 pages | Installation & environment setup | First-time setup, dependency issues |
 | **QUICKSTART.md** | 1 page | Quick reference card | Daily use, commands |
 | **README.md** | 10 pages | Complete documentation | First-time users, comprehensive guide |
 | **PROJECT_STRUCTURE.md** | 5 pages | Architecture & files | Developers, modifications |
@@ -41,10 +45,11 @@ Welcome! This index helps you navigate the project documentation.
 ## 🎯 Common Use Cases
 
 ### "I'm a new user, where do I start?"
-1. Read **[README.md](README.md)** Section 1-3 (Overview, Architecture, Configuration)
-2. Check **[QUICKSTART.md](QUICKSTART.md)** for setup commands
-3. Run `./run_all.sh`
-4. Review outputs in **[QUICKSTART.md](QUICKSTART.md)** Section "Understanding the Results"
+1. Read **[SETUP.md](SETUP.md)** to install dependencies
+2. Run `./verify_setup.sh` to check installation
+3. Check **[QUICKSTART.md](QUICKSTART.md)** for commands
+4. Run `./run_all.sh`
+5. Review outputs in **[QUICKSTART.md](QUICKSTART.md)** Section "Understanding the Results"
 
 ---
 
