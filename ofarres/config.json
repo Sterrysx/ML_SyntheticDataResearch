@@ -1,0 +1,14 @@
+{
+  "simulation": {
+    "N": 250,
+    "n": 5,
+    "m": 10,
+    "random_seed_base": 12345
+  },
+  "parameters": {
+    "p": [2, 5, 10],
+    "k": [2, 3, 4],
+    "separation": [0.1, 2, 6, 10],
+    "rho": [0.0]
+  }
+}
