@@ -6,16 +6,29 @@
 # 1. Setup & Imports
 # ------------------------------------------------------------------------------
 ensure_package <- function(pkg) {
-  if (!require(pkg, character.only = TRUE)) {
-    install.packages(pkg, repos = "http://cran.us.r-project.org")
-    library(pkg, character.only = TRUE)
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    message(paste("Installing package:", pkg))
+    install.packages(pkg, repos = "http://cran.us.r-project.org", dependencies = TRUE, type = "source")
+    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+      stop(paste("Failed to install package:", pkg))
+    }
   }
 }
 
+# Try to load essential packages
 ensure_package("jsonlite")
 ensure_package("mvtnorm")
-ensure_package("synthpop")
 ensure_package("dplyr")
+
+# For synthpop, try binary first, then source
+if (!require("synthpop", quietly = TRUE)) {
+  message("Installing synthpop package...")
+  # Try binary first
+  install.packages("synthpop", repos = "http://cran.us.r-project.org", dependencies = TRUE)
+  if (!require("synthpop", quietly = TRUE)) {
+    stop("Failed to install synthpop. Please install it manually: install.packages('synthpop')")
+  }
+}
 
 # 2. Load Configuration
 # ------------------------------------------------------------------------------

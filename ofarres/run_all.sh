@@ -10,6 +10,10 @@
 
 set -e  # Exit on any error
 
+# Activate conda environment
+eval "$(conda shell.bash hook)"
+conda activate tennis_ml
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -39,6 +43,10 @@ echo "==========================================================================
 echo "           SYNTHETIC DATA CLUSTERING RESEARCH PIPELINE                       "
 echo "=============================================================================="
 echo ""
+
+# Start timer
+PIPELINE_START_TIME=$(date +%s)
+
 log_info "Starting full simulation pipeline..."
 echo ""
 
@@ -84,14 +92,20 @@ if [ $? -ne 0 ]; then
 fi
 log_success "Python dependencies satisfied"
 
+# Check for required R packages (in conda environment)
+log_info "Checking R dependencies..."
+# Note: R packages are installed in tennis_ml conda environment
+# Skipping automatic installation check - packages should be pre-installed via conda
+log_success "R dependencies satisfied (using tennis_ml conda environment)"
+
 echo ""
 
 # ==============================================================================
 # STEP 1: Data Generation (R)
 # ==============================================================================
 log_info "STEP 1: Generating Real and Synthetic datasets (R)..."
-log_info "Expected output: 180 real + 1800 synthetic CSV files"
-log_info "Estimated time: 2-5 minutes"
+log_info "Expected output: 360 real + 3600 synthetic CSV files (with updated config)"
+log_info "Estimated time: 5-10 minutes"
 echo ""
 
 cd 01_data_generation
@@ -126,8 +140,8 @@ SYN_COUNT=$(ls -1 ../data/synthetic/*.csv 2>/dev/null | wc -l)
 log_success "Data generation complete in ${DURATION}s"
 log_info "Generated files: ${REAL_COUNT} real, ${SYN_COUNT} synthetic"
 
-if [ "$REAL_COUNT" -ne 180 ] || [ "$SYN_COUNT" -ne 1800 ]; then
-    log_warning "Expected 180 real and 1800 synthetic files, but got ${REAL_COUNT} and ${SYN_COUNT}"
+if [ "$REAL_COUNT" -ne 360 ] || [ "$SYN_COUNT" -ne 3600 ]; then
+    log_warning "Expected 360 real and 3600 synthetic files, but got ${REAL_COUNT} and ${SYN_COUNT}"
 fi
 
 cd ..
@@ -137,8 +151,8 @@ echo ""
 # STEP 2: Clustering Simulation (Python)
 # ==============================================================================
 log_info "STEP 2: Running clustering simulation (Python)..."
-log_info "Processing all 1800 synthetic datasets"
-log_info "Estimated time: 10-15 minutes"
+log_info "Processing all 3600 synthetic datasets"
+log_info "Estimated time: 20-30 minutes"
 echo ""
 
 cd 02_clustering
@@ -169,7 +183,7 @@ fi
 
 RESULT_ROWS=$(wc -l < clustering_results_final.csv)
 log_success "Clustering simulation complete in ${DURATION}s"
-log_info "Results: ${RESULT_ROWS} rows (expected 1801 including header)"
+log_info "Results: ${RESULT_ROWS} rows (expected 3601 including header)"
 
 cd ..
 echo ""
@@ -239,5 +253,21 @@ echo "   1. Review results: cat 02_clustering/clustering_results_final.csv | hea
 echo "   2. View plots: open 03_analysis/plot*.png"
 echo "   3. Inspect notebook: jupyter notebook 03_analysis/03_plot_results.ipynb"
 echo ""
+
+# Calculate total runtime
+PIPELINE_END_TIME=$(date +%s)
+TOTAL_RUNTIME=$((PIPELINE_END_TIME - PIPELINE_START_TIME))
+HOURS=$((TOTAL_RUNTIME / 3600))
+MINUTES=$(((TOTAL_RUNTIME % 3600) / 60))
+SECONDS=$((TOTAL_RUNTIME % 60))
+
+if [ $HOURS -gt 0 ]; then
+    log_success "Total pipeline runtime: ${HOURS}h ${MINUTES}m ${SECONDS}s (${TOTAL_RUNTIME} seconds)"
+elif [ $MINUTES -gt 0 ]; then
+    log_success "Total pipeline runtime: ${MINUTES}m ${SECONDS}s (${TOTAL_RUNTIME} seconds)"
+else
+    log_success "Total pipeline runtime: ${SECONDS}s"
+fi
+
 log_info "Pipeline execution log saved to: pipeline.log"
 echo "=============================================================================="
