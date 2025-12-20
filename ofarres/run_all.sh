@@ -5,14 +5,29 @@
 # ==============================================================================
 # Purpose: Execute the complete 3-step simulation pipeline
 # Author: ML Research Team
-# Date: December 9, 2025
+# Date: December 19, 2025
 # ==============================================================================
 
 set -e  # Exit on any error
 
+# Check if conda is available
+if ! command -v conda &> /dev/null; then
+    echo "❌ ERROR: conda is not installed or not in PATH"
+    exit 1
+fi
+
 # Activate conda environment
 eval "$(conda shell.bash hook)"
-conda activate tennis_ml
+
+# Check if tennis_ml environment exists and activate it
+if conda env list | grep -q "tennis_ml"; then
+    conda activate tennis_ml
+    echo "✓ Activated conda environment: tennis_ml"
+else
+    echo "❌ ERROR: conda environment 'tennis_ml' not found"
+    echo "Please create it first or update the environment name in this script"
+    exit 1
+fi
 
 # Color codes for output
 RED='\033[0;31m'

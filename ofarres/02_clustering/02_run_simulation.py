@@ -20,20 +20,20 @@ def process_synthetic_dataset(syn_path):
     """
     try:
         # Parse Synthetic Filename
-        # Example: "N250_p10_k2_rho0_sep0.1_rep1_syn5.csv"
+        # Example: "N250_p10_k2_rho0_sep0.1_rep1_syn5_normal.csv" or "..._gamma.csv"
         syn_filename = os.path.basename(syn_path)
         
-        # Extract parameters using regex
-        match = re.match(r'N(\d+)_p(\d+)_k(\d+)_rho([\d.]+)_sep([\d.]+)_rep(\d+)_syn(\d+)\.csv', syn_filename)
+        # Extract parameters using regex (includes distribution suffix)
+        match = re.match(r'N(\d+)_p(\d+)_k(\d+)_rho([\d.]+)_sep([\d.]+)_rep(\d+)_syn(\d+)_(normal|gamma)\.csv', syn_filename)
         if not match:
             print(f"⚠️ Could not parse filename: {syn_filename}")
             return None
         
-        N, p, k, rho, sep, rep, syn_idx = match.groups()
+        N, p, k, rho, sep, rep, syn_idx, distribution = match.groups()
         k_truth = int(k)
         
-        # Build corresponding real filename (without _synX suffix)
-        real_filename = f"N{N}_p{p}_k{k}_rho{rho}_sep{sep}_rep{rep}.csv"
+        # Build corresponding real filename (without _synX suffix but WITH distribution)
+        real_filename = f"N{N}_p{p}_k{k}_rho{rho}_sep{sep}_rep{rep}_{distribution}.csv"
         real_path = os.path.join("../data/real", real_filename)
         
         if not os.path.exists(real_path):
@@ -75,6 +75,7 @@ def process_synthetic_dataset(syn_path):
             'sep': float(sep),
             'rep': int(rep),
             'syn_idx': int(syn_idx),
+            'distribution': distribution,
             # Heatmap Data (Detection on Synthetic)
             'success_kmeans': success_km,
             'success_hc': success_hc,
