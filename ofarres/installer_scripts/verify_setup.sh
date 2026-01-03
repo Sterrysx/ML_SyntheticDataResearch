@@ -25,14 +25,15 @@ fi
 
 # Check Python installation
 echo "Checking Python..."
-if command -v python3 &> /dev/null; then
-    PYTHON_VERSION=$(python3 --version)
-    echo "  ✓ Python found: $PYTHON_VERSION"
-    PYTHON_CMD="python3"
-elif command -v python &> /dev/null; then
+# Prefer 'python' (conda env) over 'python3' (system)
+if command -v python &> /dev/null; then
     PYTHON_VERSION=$(python --version)
     echo "  ✓ Python found: $PYTHON_VERSION"
     PYTHON_CMD="python"
+elif command -v python3 &> /dev/null; then
+    PYTHON_VERSION=$(python3 --version)
+    echo "  ✓ Python found: $PYTHON_VERSION"
+    PYTHON_CMD="python3"
 else
     echo "  ✗ Python not found"
     ALL_OK=false
@@ -100,8 +101,8 @@ if [ -f "../config/config.json" ]; then
     echo "  ✓ config/config.json exists"
     
     # Validate JSON
-    if command -v python3 &> /dev/null; then
-        python3 -c "import json; json.load(open('../config.json'))" 2>/dev/null
+    if [ -n "$PYTHON_CMD" ]; then
+        $PYTHON_CMD -c "import json; json.load(open('../config/config.json'))" 2>/dev/null
         if [ $? -eq 0 ]; then
             echo "  ✓ config.json is valid JSON"
         else

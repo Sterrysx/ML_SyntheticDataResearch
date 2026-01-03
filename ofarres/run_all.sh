@@ -19,12 +19,12 @@ fi
 # Activate conda environment
 eval "$(conda shell.bash hook)"
 
-# Check if tennis_ml environment exists and activate it
-if conda env list | grep -q "tennis_ml"; then
-    conda activate tennis_ml
-    echo "✓ Activated conda environment: tennis_ml"
+# Check if synthetic_data environment exists and activate it
+if conda env list | grep -q "synthetic_data"; then
+    conda activate synthetic_data
+    echo "✓ Activated conda environment: synthetic_data"
 else
-    echo "❌ ERROR: conda environment 'tennis_ml' not found"
+    echo "❌ ERROR: conda environment 'synthetic_data' not found"
     echo "Please create it first or update the environment name in this script"
     exit 1
 fi
@@ -158,8 +158,8 @@ SYN_COUNT=$(ls -1 ../data/synthetic/*.csv 2>/dev/null | wc -l)
 log_success "Data generation complete in ${DURATION}s"
 log_info "Generated files: ${REAL_COUNT} real, ${SYN_COUNT} synthetic"
 
-if [ "$REAL_COUNT" -ne 360 ] || [ "$SYN_COUNT" -ne 3600 ]; then
-    log_warning "Expected 360 real and 3600 synthetic files, but got ${REAL_COUNT} and ${SYN_COUNT}"
+if [ "$REAL_COUNT" -ne 720 ] || [ "$SYN_COUNT" -ne 7200 ]; then
+    log_warning "Expected 720 real and 7200 synthetic files, but got ${REAL_COUNT} and ${SYN_COUNT}"
 fi
 
 cd ..

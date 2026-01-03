@@ -9,6 +9,12 @@
 
 set -e  # Exit on any error
 
+# Resolve script directory and repository root so the script works
+# no matter where it's executed from (keeps path logic "intelligent").
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+
 echo "=========================================="
 echo "Installing Pipeline Dependencies"
 echo "=========================================="
@@ -37,7 +43,7 @@ echo "=========================================="
 echo ""
 
 if command -v Rscript &> /dev/null; then
-    Rscript installer_scripts/install_requirements.R
+    Rscript "$REPO_ROOT/installer_scripts/install_requirements.R"
     if [ $? -ne 0 ]; then
         echo ""
         echo "❌ R package installation failed!"
@@ -59,15 +65,15 @@ echo "Step 2: Installing Python packages"
 echo "=========================================="
 echo ""
 
-if [ -f "../requirements.txt" ]; then
-    pip install -r ../requirements.txt
+if [ -f "$REPO_ROOT/requirements.txt" ]; then
+    pip install -r "$REPO_ROOT/requirements.txt"
     if [ $? -ne 0 ]; then
         echo ""
         echo "❌ Python package installation failed!"
         exit 1
     fi
 else
-    echo "❌ ERROR: requirements.txt not found in repository root!"
+    echo "❌ ERROR: requirements.txt not found in repository root ($REPO_ROOT)!"
     exit 1
 fi
 
@@ -81,9 +87,19 @@ echo "Step 3: Verifying installation"
 echo "=========================================="
 echo ""
 
-./installer_scripts/verify_setup.sh
+# Make sure the main runner is executable (harmless if already executable)
+if [ -f "$REPO_ROOT/run_all.sh" ]; then
+    chmod +x "$REPO_ROOT/run_all.sh" || true
+fi
 
-if [ $? -eq 0 ]; then
+# Run the verifier from the installer_scripts directory so its relative
+# path checks resolve consistently (the verifier expects to be run there).
+pushd "$REPO_ROOT/installer_scripts" > /dev/null
+./verify_setup.sh
+VERIFY_EXIT=$?
+popd > /dev/null
+
+if [ $VERIFY_EXIT -eq 0 ]; then
     echo ""
     echo "=========================================="
     echo "✅ Installation complete!"
@@ -96,5 +112,5 @@ else
     echo ""
     echo "❌ Setup verification failed!"
     echo "Please check the error messages above."
-    exit 1
+    exit $VERIFY_EXIT
 fi

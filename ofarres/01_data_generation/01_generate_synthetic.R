@@ -32,8 +32,8 @@ if (!require("synthpop", quietly = TRUE)) {
 
 # 2. Load Configuration
 # ------------------------------------------------------------------------------
-config_path <- "../config.json"
-if (!file.exists(config_path)) stop("❌ config.json not found! Please ensure it is in the parent directory.")
+config_path <- "../config/config.json"
+if (!file.exists(config_path)) stop("❌ config.json not found! Please ensure it is in ../config/config.json")
 
 # Read JSON
 config <- fromJSON(config_path)

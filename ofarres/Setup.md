@@ -24,8 +24,8 @@ Before starting, ensure you have:
 # Navigate to your repository root
 cd /path/to/ML_SyntheticDataResearch
 
-# Create a new conda environment with Python 3.9
-conda create -n synthetic_data python=3.9
+# Create a new conda environment with Python 3.13
+conda create -n synthetic_data python=3.13
 
 # Activate the environment
 conda activate synthetic_data

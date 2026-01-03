@@ -9,7 +9,7 @@ from tqdm import tqdm
 from clustering_utils import detect_optimal_k, calculate_quality_metrics
 
 # 1. LOAD CONFIG
-with open("../config.json", "r") as f:
+with open("../config/config.json", "r") as f:
     config = json.load(f)
 
 # 2. WORKER FUNCTION
