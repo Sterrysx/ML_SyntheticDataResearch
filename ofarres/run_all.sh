@@ -71,11 +71,11 @@ echo ""
 log_info "STEP 0: Validating environment..."
 
 # Check if config.json exists
-if [ ! -f "config.json" ]; then
-    log_error "config.json not found! Please ensure it exists in the root directory."
+if [ ! -f "config/config.json" ]; then
+    log_error "config/config.json not found! Please ensure it exists in the config directory."
     exit 1
 fi
-log_success "config.json found"
+log_success "config/config.json found"
 
 # Check R installation
 if ! command -v Rscript &> /dev/null; then
@@ -107,11 +107,14 @@ if [ $? -ne 0 ]; then
 fi
 log_success "Python dependencies satisfied"
 
-# Check for required R packages (in conda environment)
+# Check for required R packages
 log_info "Checking R dependencies..."
-# Note: R packages are installed in tennis_ml conda environment
-# Skipping automatic installation check - packages should be pre-installed via conda
-log_success "R dependencies satisfied (using tennis_ml conda environment)"
+Rscript -e "pkgs <- c('jsonlite', 'mvtnorm', 'synthpop', 'dplyr'); if (!all(pkgs %in% installed.packages()[,'Package'])) { quit(status=1) }" 2>/dev/null
+if [ $? -ne 0 ]; then
+    log_warning "Some R packages are missing. Installing..."
+    Rscript installer_scripts/install_requirements.R
+fi
+log_success "R dependencies satisfied"
 
 echo ""
 

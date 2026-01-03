@@ -1,425 +1,352 @@
-# Synthetic Data Clustering Research Pipeline - Setup Guide
+# Setup Guide - Synthetic Data Clustering Pipeline
 
-## Overview
-
-This directory contains a complete, standalone pipeline for comparing K-Means and Hierarchical Clustering algorithms on synthetic data. This guide will help you set up the environment and run the full simulation.
+**Complete installation and environment setup instructions**
 
 ---
 
-## 📋 Prerequisites
+## ⚠️ Prerequisites
 
-### Required Software
-
-1. **R** (version 4.0 or higher)
-   - Download: https://www.r-project.org/
-   - Check installation: `R --version`
-
-2. **Python** (version 3.8 or higher)
-   - Download: https://www.python.org/
-   - Check installation: `python --version` or `python3 --version`
-
-3. **Git** (for cloning/version control)
-   - Download: https://git-scm.com/
-   - Check installation: `git --version`
-
-### System Requirements
-
-- **RAM:** At least 4 GB (8 GB recommended)
-- **Disk Space:** ~500 MB free
-- **OS:** Linux, macOS, or Windows (with WSL recommended for Windows)
+Before starting, ensure you have:
+1. **Conda** (Miniconda or Anaconda) installed
+2. **R** (version 4.0 or higher)
+3. **Python** 3.9 or higher (will be installed via conda)
+4. **Git** (for cloning/updating the repository)
 
 ---
 
-## 🚀 Quick Setup
+## 📋 Installation Steps
 
-### Step 1: Install R Packages
+### Step 1: Create Conda Environment
 
-Run the provided R installation script:
+**IMPORTANT**: You must create and activate the conda environment **BEFORE** running any installation scripts.
 
 ```bash
-Rscript install_requirements.R
-```
+# Navigate to your repository root
+cd /path/to/ML_SyntheticDataResearch
 
-**Manual installation (if needed):**
-```r
-install.packages(c("jsonlite", "mvtnorm", "synthpop", "dplyr"), 
-                 repos = "http://cran.us.r-project.org")
-```
-
-**Required R packages:**
-- `jsonlite` - JSON parsing
-- `mvtnorm` - Multivariate normal distribution
-- `synthpop` - Synthetic data generation (CART method)
-- `dplyr` - Data manipulation
-
----
-
-### Step 2: Install Python Packages
-
-**Option A: Using pip (recommended)**
-```bash
-pip install -r requirements.txt
-```
-
-**Option B: Using conda**
-```bash
+# Create a new conda environment with Python 3.9
 conda create -n synthetic_data python=3.9
+
+# Activate the environment
 conda activate synthetic_data
-pip install -r requirements.txt
 ```
 
-**Option C: Manual installation**
+**Verify activation:**
 ```bash
-pip install pandas numpy scikit-learn matplotlib seaborn scipy joblib tqdm jupyter
-```
+# You should see (synthetic_data) at the beginning of your terminal prompt
+# Example: (synthetic_data) user@machine:~$
 
-**Core Python packages:**
-- `pandas` - Data manipulation
-- `numpy` - Numerical computing
-- `scikit-learn` - Clustering algorithms
-- `matplotlib` + `seaborn` - Visualization
-- `scipy` - Statistical tests
-- `joblib` - Parallel processing
-- `tqdm` - Progress bars
-- `jupyter` - Notebook execution
-
----
-
-### Step 3: Verify Installation
-
-Run the verification script:
-
-```bash
-# Verify R packages
-Rscript -e "lapply(c('jsonlite', 'mvtnorm', 'synthpop', 'dplyr'), library, character.only=TRUE); cat('✅ All R packages installed\n')"
-
-# Verify Python packages
-python -c "import pandas, numpy, sklearn, matplotlib, seaborn, scipy, joblib, tqdm, jupyter; print('✅ All Python packages installed')"
+# Check Python version
+python --version  # Should show Python 3.9.x
 ```
 
 ---
 
-## 🎯 Running the Pipeline
-
-### Option 1: Run Everything (Recommended)
-
-Execute the master script that runs all 3 steps automatically:
+### Step 2: Navigate to Pipeline Directory
 
 ```bash
+cd ofarres/
+```
+
+---
+
+### Step 3: Run Installation Script
+
+The `install_all.sh` script will:
+1. Install all required R packages (jsonlite, mvtnorm, synthpop, dplyr)
+2. Install all required Python packages (from `../requirements.txt`)
+3. Verify the installation automatically
+
+```bash
+./installer_scripts/install_all.sh
+```
+
+**What happens during installation:**
+- R packages are installed from CRAN
+- Python packages are installed via pip
+- Installation verification runs automatically
+- Any errors will be reported immediately
+
+**Expected output:**
+```
+==========================================
+Installing Pipeline Dependencies
+==========================================
+
+✓ Conda environment active: synthetic_data
+
+==========================================
+Step 1: Installing R packages
+==========================================
+...
+✅ All packages verified successfully!
+
+==========================================
+Step 2: Installing Python packages
+==========================================
+...
+Successfully installed pandas-2.0.0 numpy-1.23.0 ...
+
+==========================================
+Step 3: Verifying installation
+==========================================
+...
+✅ All dependencies verified!
+
+==========================================
+✅ Installation complete!
+==========================================
+
+You can now run the pipeline:
+  ./run_all.sh
+```
+
+---
+
+### Step 4: Verify Setup (Optional)
+
+If you want to manually verify your setup later:
+
+```bash
+./installer_scripts/verify_setup.sh
+```
+
+This checks:
+- R and Python installations
+- All required R packages
+- All required Python packages
+- File permissions
+- Configuration files
+
+---
+
+## 🚀 Running the Pipeline
+
+After successful setup:
+
+```bash
+# Make sure you're in the ofarres/ directory
+cd ofarres/
+
+# Ensure conda environment is activated
+conda activate synthetic_data
+
+# Run the complete pipeline (~15-20 minutes)
 ./run_all.sh
 ```
 
-**Expected runtime:** 15-20 minutes
-
-**This will:**
-1. Generate 180 real + 1,800 synthetic datasets (~3 min)
-2. Run clustering analysis on all 1,800 datasets (~12 min)
-3. Generate 3 publication-ready plots (~1 min)
-
 ---
 
-### Option 2: Run Steps Individually
+## 🔧 Manual Installation (If Automated Script Fails)
 
-#### Step 1: Generate Data (R)
+### Install R Packages Manually
+
 ```bash
-cd 01_data_generation
-Rscript 01_generate_synthetic.R
-cd ..
+Rscript installer_scripts/install_requirements.R
 ```
 
-**Output:** `data/real/` (180 files), `data/synthetic/` (1,800 files)
+Or in R console:
+```r
+install.packages(c("jsonlite", "mvtnorm", "synthpop", "dplyr"))
+```
 
----
+### Install Python Packages Manually
 
-#### Step 2: Run Clustering Simulation (Python)
 ```bash
-cd 02_clustering
-python 02_run_simulation.py
-cd ..
-```
+# Make sure conda environment is activated
+conda activate synthetic_data
 
-**Output:** `02_clustering/clustering_results_final.csv` (1,800 rows)
-
----
-
-#### Step 3: Generate Visualizations (Jupyter)
-```bash
-cd 03_analysis
-jupyter notebook 03_plot_results.ipynb
-```
-
-**Or execute programmatically:**
-```bash
-cd 03_analysis
-python -m jupyter nbconvert --to notebook --execute 03_plot_results.ipynb --output 03_plot_results_executed.ipynb
-cd ..
-```
-
-**Output:** 3 PNG plots in `03_analysis/`
-
----
-
-## 🔧 Configuration
-
-### Modifying Simulation Parameters
-
-Edit `config.json` to change simulation parameters:
-
-```json
-{
-  "simulation": {
-    "N": 250,              // Sample size per dataset
-    "n": 5,                // Number of real datasets per combination
-    "m": 10,               // Synthetic datasets per real dataset
-    "random_seed_base": 12345
-  },
-  "parameters": {
-    "p": [2, 5, 10],              // Number of features
-    "k": [2, 3, 4],               // True number of clusters
-    "separation": [0.1, 2, 6, 10], // Cluster separation distance
-    "rho": [0.0]                   // Within-cluster correlation
-  }
-}
-```
-
-**Important:** After changing parameters, delete old data:
-```bash
-rm -rf data/real/* data/synthetic/* 02_clustering/clustering_results_final.csv
-```
-
----
-
-## 📊 Expected Outputs
-
-### Data Files
-```
-data/
-├── real/                    # 180 real datasets
-│   └── N250_p10_k2_rho0_sep0.1_rep1.csv
-└── synthetic/               # 1,800 synthetic datasets
-    └── N250_p10_k2_rho0_sep0.1_rep1_syn5.csv
-```
-
-### Results
-```
-02_clustering/
-└── clustering_results_final.csv    # 1,800 rows with metrics
-```
-
-### Visualizations
-```
-03_analysis/
-├── plot1_success_rate_comparison.png      # Heatmap: Detection success
-├── plot2_performance_delta.png            # Heatmap: HC vs K-Means
-└── plot3_quality_distortion_boxplots.png  # Boxplots: Quality degradation
+# Install from requirements file
+pip install -r requirements.txt
 ```
 
 ---
 
 ## 🐛 Troubleshooting
 
-### R Package Installation Fails
+### Issue: "conda: command not found"
 
-**Problem:** Package compilation errors
-
-**Solution:**
+**Solution**: Install Miniconda first
 ```bash
-# On Ubuntu/Debian
-sudo apt-get install r-base-dev libcurl4-openssl-dev libssl-dev libxml2-dev
+# Download Miniconda installer
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 
-# On macOS
-brew install gcc
+# Run installer
+bash Miniconda3-latest-Linux-x86_64.sh
+
+# Restart terminal or source .bashrc
+source ~/.bashrc
 ```
 
 ---
 
-### Python Import Errors
+### Issue: "R is not installed"
 
-**Problem:** `ModuleNotFoundError: No module named 'X'`
+**Solution**: Install R
 
-**Solution:**
+**Ubuntu/Debian:**
 ```bash
-# Ensure you're in the correct environment
-which python
-pip list
-
-# Reinstall missing package
-pip install X
-```
-
----
-
-### Permission Denied on run_all.sh
-
-**Problem:** `bash: ./run_all.sh: Permission denied`
-
-**Solution:**
-```bash
-chmod +x run_all.sh
-./run_all.sh
-```
-
----
-
-### Out of Memory Error
-
-**Problem:** Python script crashes with memory error
-
-**Solution:**
-- Reduce `m` in config.json (fewer synthetic datasets)
-- Close other applications
-- Run on a machine with more RAM
-
----
-
-### Data Generation Takes Too Long
-
-**Problem:** R script runs for hours
-
-**Solution:**
-- Check parameters in config.json
-- Reduce grid size (fewer p, k, separation values)
-- Ensure synthpop is using CART (not ctree which is slower)
-
----
-
-### Plots Not Generated
-
-**Problem:** Jupyter notebook doesn't create PNG files
-
-**Solution:**
-```bash
-# Install missing dependencies
-pip install nbconvert
-
-# Or run notebook interactively
-cd 03_analysis
-jupyter notebook 03_plot_results.ipynb
-# Then: Cell → Run All
-```
-
----
-
-## 🔍 Validation Tests
-
-### Verify Data Generation
-```bash
-# Check file counts
-ls data/real/*.csv | wc -l      # Should be 180
-ls data/synthetic/*.csv | wc -l  # Should be 1800
-
-# Check row count in a file (should be N+1 for header)
-head -n 251 data/real/N250_p2_k2_rho0_sep0.1_rep1.csv | wc -l  # Should be 251
-```
-
-### Verify Simulation Results
-```python
-import pandas as pd
-df = pd.read_csv('02_clustering/clustering_results_final.csv')
-
-# Should have 1800 rows
-assert len(df) == 1800, f"Expected 1800 rows, got {len(df)}"
-
-# Should have 10 synthetic per real dataset
-counts = df.groupby(['N','p','k','sep','rho','rep']).size()
-assert counts.min() == 10 and counts.max() == 10
-
-print("✅ Validation passed!")
-```
-
----
-
-## 🌐 Environment-Specific Notes
-
-### Windows (WSL)
-
-If using Windows Subsystem for Linux:
-
-```bash
-# Install R
 sudo apt update
-sudo apt install r-base
-
-# Install Python
-sudo apt install python3 python3-pip
-
-# Then follow normal setup
+sudo apt install r-base r-base-dev
 ```
 
----
-
-### macOS
-
-Using Homebrew:
-
+**macOS (with Homebrew):**
 ```bash
-# Install R
 brew install r
+```
 
-# Install Python
-brew install python
+**Windows:**
+- Download from https://cran.r-project.org/
+- Install using the GUI installer
 
-# Then follow normal setup
+---
+
+### Issue: "ERROR: No conda environment is active!"
+
+**Solution**: Activate the environment before running install_all.sh
+```bash
+conda activate synthetic_data
+./scripts/install_all.sh
 ```
 
 ---
 
-### Linux (Ubuntu/Debian)
+### Issue: R package installation fails with "permission denied"
+
+**Solution**: Don't use sudo with R package installation. Packages will install to your user library.
+
+If prompted about creating a personal library, select **Yes**.
+
+---
+
+### Issue: Python package installation fails
+
+**Solution**: Ensure pip is up to date
+```bash
+conda activate synthetic_data
+pip install --upgrade pip
+pip install -r ../requirements.txt
+```
+
+---
+
+### Issue: "verify_setup.sh: Permission denied"
+
+**Solution**: Make scripts executable
+```bash
+chmod +x installer_scripts/install_all.sh
+chmod +x installer_scripts/verify_setup.sh
+chmod +x run_all.sh
+```
+
+---
+
+## 📦 What Gets Installed?
+
+### R Packages
+- **jsonlite** (1.8.0+) - JSON configuration parsing
+- **mvtnorm** (1.1.0+) - Multivariate normal distribution generation
+- **synthpop** (1.7.0+) - Synthetic data generation via CART
+- **dplyr** (1.0.0+) - Data manipulation
+
+### Python Packages (Key Dependencies)
+- **pandas** (2.0.0+) - Data structures and analysis
+- **numpy** (1.23.0+) - Numerical computing
+- **scikit-learn** (1.2.0+) - Machine learning algorithms
+- **matplotlib** (3.6.0+) - Plotting and visualization
+- **seaborn** (0.12.0+) - Statistical visualization
+- **scipy** (1.10.0+) - Scientific computing
+- **jupyter** (1.0.0+) - Interactive notebooks
+- **tqdm** (4.64.0+) - Progress bars
+
+*See `../requirements.txt` for complete list*
+
+---
+
+## 🔄 Updating the Environment
+
+If you need to update packages:
 
 ```bash
-# Install R
-sudo apt update
-sudo apt install r-base
+# Activate environment
+conda activate synthetic_data
 
-# Install Python
-sudo apt install python3 python3-pip
+# Update Python packages
+pip install --upgrade -r ../requirements.txt
 
-# Then follow normal setup
+# Update R packages
+Rscript -e "update.packages(ask = FALSE)"
 ```
 
 ---
 
-## 📚 Additional Resources
+## 🗑️ Removing the Environment
 
-- **Full Documentation:** See `README.md`
-- **Quick Reference:** See `QUICKSTART.md`
-- **Architecture Details:** See `PROJECT_STRUCTURE.md`
-- **Bug Fixes:** See `DIAGNOSIS_REPORT.md`
+If you need to start fresh:
 
----
+```bash
+# Deactivate if currently active
+conda deactivate
 
-## ✅ Setup Checklist
+# Remove environment
+conda env remove -n synthetic_data
 
-- [ ] R installed and accessible (`R --version`)
-- [ ] Python installed and accessible (`python --version`)
-- [ ] R packages installed (`jsonlite`, `mvtnorm`, `synthpop`, `dplyr`)
-- [ ] Python packages installed (see `requirements.txt`)
-- [ ] `run_all.sh` is executable (`chmod +x run_all.sh`)
-- [ ] `config.json` exists and is valid JSON
-- [ ] All verification tests pass
-
----
-
-## 🎓 Next Steps
-
-1. **Run the pipeline:** `./run_all.sh`
-2. **Review results:** Check `clustering_results_final.csv`
-3. **View plots:** Open PNG files in `03_analysis/`
-4. **Modify parameters:** Edit `config.json` and re-run
-5. **Read analysis:** Open `03_analysis/03_plot_results.ipynb` in Jupyter
+# Recreate from scratch
+conda create -n synthetic_data python=3.9
+conda activate synthetic_data
+cd ofarres/
+./scripts/install_all.sh
+```
 
 ---
 
-## 📧 Support
+## ✅ Post-Installation Checklist
 
-For issues:
-1. Check this SETUP.md first
-2. Review `DIAGNOSIS_REPORT.md` for known bugs
-3. Check `QUICKSTART.md` for common commands
-4. Inspect terminal output for specific errors
+Before running the pipeline, verify:
+
+- [ ] Conda environment `synthetic_data` is created and activated
+- [ ] `installer_scripts/install_all.sh` completed without errors
+- [ ] `installer_scripts/verify_setup.sh` shows all ✓ checks passed
+- [ ] You are in the `ofarres/` directory
+- [ ] `run_all.sh` has execute permissions (`chmod +x run_all.sh`)
+- [ ] `config/config.json` exists in the `ofarres/config/` directory
 
 ---
 
-**Last Updated:** December 9, 2025  
-**Pipeline Version:** 2.0  
-**Status:** Production Ready
+## 📚 Next Steps
+
+After successful setup:
+
+1. **Review configuration**: Check `config/config.json` for simulation parameters
+2. **Read pipeline documentation**: See [README.md](README.md) for details
+3. **Run the pipeline**: Execute `./run_all.sh`
+4. **Analyze results**: Outputs will be in `03_analysis/`
+
+---
+
+## 💡 Tips
+
+- **Always activate the conda environment** before working with the pipeline
+- **Don't use sudo** for R or Python package installations
+- **Keep the environment clean** - only install required packages
+- **Check verify_setup.sh** if anything behaves unexpectedly
+- **Read error messages** - they usually indicate exactly what's missing
+
+---
+
+## 📞 Getting Help
+
+If you encounter issues:
+
+1. Run `./installer_scripts/verify_setup.sh` to diagnose the problem
+2. Check the **Troubleshooting** section above
+3. Review error messages carefully
+4. Ensure conda environment is activated
+5. Try manual installation steps
+
+---
+
+**Last Updated**: January 3, 2026  
+**Conda Environment**: `synthetic_data`  
+**Python Version**: 3.9+  
+**R Version**: 4.0+

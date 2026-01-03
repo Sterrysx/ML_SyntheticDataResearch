@@ -2,35 +2,56 @@
 # 
 # Install with: pip install -r requirements.txt
 # 
-# For conda: conda create -n synthetic_data python=3.9
-#            conda activate synthetic_data
-#            pip install -r requirements.txt
+# Prerequisites: 
+#   1. Create conda environment: conda create -n synthetic_data python=3.9
+#   2. Activate environment: conda activate synthetic_data
+#   3. Install packages: pip install -r requirements.txt
 
+# ============================================================================
 # Core Data Processing
-pandas>=1.5.0
+# ============================================================================
+pandas>=2.0.0
 numpy>=1.23.0
 
+# ============================================================================
 # Machine Learning & Clustering
+# ============================================================================
 scikit-learn>=1.2.0
 
+# ============================================================================
 # Visualization
+# ============================================================================
 matplotlib>=3.6.0
 seaborn>=0.12.0
 
+# ============================================================================
 # Statistical Analysis
+# ============================================================================
 scipy>=1.10.0
 
-# Parallel Processing
+# ============================================================================
+# Parallel Processing & Utilities
+# ============================================================================
 joblib>=1.2.0
-
-# Progress Bars
 tqdm>=4.64.0
 
+# ============================================================================
 # Jupyter Notebook Support
+# ============================================================================
 jupyter>=1.0.0
+jupyterlab>=4.0.0
 notebook>=6.5.0
 nbconvert>=7.0.0
-
-# Optional: For better notebook execution
 ipykernel>=6.19.0
 ipywidgets>=8.0.0
+
+# ============================================================================
+# Additional Dependencies (auto-installed with above)
+# ============================================================================
+# These are typically installed as dependencies but listed for reference:
+# - ipython
+# - traitlets
+# - tornado
+# - pyzmq
+# - jupyter-client
+# - jupyter-core
