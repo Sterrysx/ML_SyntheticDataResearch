@@ -6,7 +6,7 @@
 
 ## 📋 Project Overview
 
-This repository contains research extending the work of **Chen Xinnuo** (2025) on evaluating how well synthetic data preserves clustering properties of real data. The project systematically compares K-Means and Hierarchical Clustering algorithms across 1,800+ datasets to answer critical questions about synthetic data quality.
+This repository contains research extending the work of **Chen Xinnuo** (2025) on evaluating how well synthetic data preserves clustering properties of real data. The extension is developed by **Oriol Farrés** under the supervision of **Jordi Cortés**. The project systematically compares K-Means and Hierarchical Clustering algorithms across 1,800+ datasets to answer critical questions about synthetic data quality.
 
 ### Research Questions
 1. **Detection**: Can clustering algorithms correctly identify the number of clusters (k) in synthetic data?
@@ -39,15 +39,7 @@ ML_SyntheticDataResearch/
 │   ├── 02_clustering/         ← Step 2: Run clustering simulations
 │   └── 03_analysis/           ← Step 3: Visualization & results
 │
-├── xinnuo/                    ← 📚 ORIGINAL RESEARCH (Chen Xinnuo, 2025)
-│   ├── README.md              ← Citation & context
-│   ├── Purpose1.1.R           ← Original R analysis scripts
-│   ├── Purpose1.1.Rmd         ← R Markdown notebooks
-│   └── *.png                  ← Original visualizations
-│
-├── Files/                     ← 📄 Thesis & Defense Documents
-│   ├── TFG-EST_ChenXinnuo_2025.pdf
-│   └── Defensa.pdf
+├── xinnuo_files/              ← 📚 ORIGINAL RESEARCH (Chen Xinnuo, 2025)
 │
 ├── README.md                  ← This file
 └── .gitignore
@@ -90,14 +82,10 @@ cd ofarres/
 
 ## 📖 Documentation
 
-All detailed documentation is in the **[ofarres/](ofarres/)** directory:
+Comprehensive documentation is available in the **[ofarres/](ofarres/)** directory:
 
-| Document | Purpose |
-|----------|---------|
-| **[ofarres/SETUP.md](ofarres/SETUP.md)** | Complete installation guide |
-| **[ofarres/README.md](ofarres/README.md)** | Full pipeline documentation |
-| **[ofarres/QUICKSTART.md](ofarres/QUICKSTART.md)** | Command reference |
-| **[ofarres/PROJECT_STRUCTURE.md](ofarres/PROJECT_STRUCTURE.md)** | Architecture details |
+- **[ofarres/SETUP.md](ofarres/SETUP.md)** - Complete installation and environment setup guide
+- **[ofarres/README.md](ofarres/README.md)** - Full pipeline documentation and methodology
 
 ---
 
@@ -109,10 +97,16 @@ This work extends the methodology developed by:
 > **Chen Xinnuo** (2025). *TFG-EST: Synthetic Data Generation and Clustering Analysis*.  
 > Universidad de Barcelona.
 
-Original research materials are preserved in the **[xinnuo/](xinnuo/)** directory for reference and citation purposes.
+Original research materials are preserved in the **[xinnuo_files/](xinnuo_files/)** directory for reference and citation purposes.
 
 ### Current Extension
-Pipeline implementation and extended analysis by the ML Research Team (2025-2026).
+Pipeline implementation and extended analysis by **Oriol Farrés** (2025-2026), under the supervision of **Jordi Cortés**.
+
+**Extended Work:**
+- Automated 3-step pipeline implementation (R + Python)
+- Systematic parameter sweep across 1,800+ dataset configurations
+- Publication-ready visualization framework
+- Reproducible research infrastructure with version control
 
 ---
 
@@ -168,29 +162,14 @@ The pipeline reveals that:
 
 ---
 
-## 📁 Legacy Files
+##  License
 
-- **`notebooks/`** - Deprecated exploratory notebooks (kept for reference)
-- **`simulation_data/`** - Old simulation outputs (superseded by `ofarres/`)
-- **`data/`** - Initial test datasets (no longer used)
-
----
-
-## 🤝 Contributing
-
-This is an active research project. For questions or contributions:
-1. Check existing documentation in `ofarres/`
-2. Review [ofarres/PROJECT_STRUCTURE.md](ofarres/PROJECT_STRUCTURE.md) for architecture
-3. Follow the modification guide in the documentation
-
----
-
-## 📝 License
-
-Research code for academic purposes. Original work by Chen Xinnuo (2025), extended implementation by ML Research Team.
+Research code for academic purposes. Original work by Chen Xinnuo (2025), extended implementation by Oriol Farrés under supervision of Jordi Cortés (2025-2026).
 
 ---
 
 **Last Updated**: January 3, 2026  
 **Repository**: ML_SyntheticDataResearch  
-**Status**: Production-ready pipeline
+**Status**: Production-ready pipeline  
+**Extended by**: Oriol Farrés (supervised by Jordi Cortés)  
+**Original work**: Chen Xinnuo (2025)
