@@ -1,0 +1,40 @@
+# Python Package Requirements for Synthetic Data Regression Pipeline
+#
+# Install with: pip install -r requirements.txt
+#
+# Prerequisites:
+#   1. Create conda environment: conda create -n synthetic_data python=3.13
+#   2. Activate environment: conda activate synthetic_data
+#   3. Install packages: pip install -r requirements.txt
+
+# ============================================================================
+# Core Data Processing
+# ============================================================================
+pandas>=2.0.0
+numpy>=1.23.0
+
+# ============================================================================
+# Machine Learning
+# ============================================================================
+scikit-learn>=1.2.0
+
+# ============================================================================
+# Visualization
+# ============================================================================
+matplotlib>=3.6.0
+seaborn>=0.12.0
+
+# ============================================================================
+# Statistical Analysis
+# ============================================================================
+scipy>=1.10.0
+
+# ============================================================================
+# Jupyter Notebook Support
+# ============================================================================
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+notebook>=6.5.0
+nbconvert>=7.0.0
+ipykernel>=6.19.0
+ipywidgets>=8.0.0
