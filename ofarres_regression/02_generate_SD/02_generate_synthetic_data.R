@@ -2,10 +2,11 @@
 # SCRIPT: 02_generate_synthetic_data.R
 # PURPOSE: Generate Synthetic Data (SD) from each Original Data (OD) file
 #          using the CART method from the `synthpop` package.
+#          Now supports M repetitions per rho value.
 # ==============================================================================
 #
-# Inputs:   ../data/original/OD_*.csv    (from Step 1)
-# Outputs:  ../data/synthetic/SD_*.csv
+# Inputs:   ../data/original/OD_*_rep*.csv    (from Step 1)
+# Outputs:  ../data/synthetic/SD_*_rep*.csv
 # ==============================================================================
 
 # 1. Setup & Imports
@@ -54,14 +55,20 @@ cat(sprintf("[INFO] Found %d OD file(s) to synthesize (method = '%s').\n\n",
 
 # 4. Synthesis Loop
 # ------------------------------------------------------------------------------
+total <- length(od_files)
+cat(sprintf("[INFO] Processing %d OD file(s)...\n\n", total))
+
 for (idx in seq_along(od_files)) {
 
   od_path <- od_files[idx]
   od_name <- basename(od_path)
   od      <- read.csv(od_path)
 
-  cat(sprintf("[INFO] Synthesizing: %s  (dim: %d x %d)\n",
-              od_name, nrow(od), ncol(od)))
+  # Print progress periodically
+  if (idx == 1 || idx == total || idx %% 10 == 0) {
+    cat(sprintf("[INFO] Synthesizing (%d/%d): %s  (dim: %d x %d)\n",
+                idx, total, od_name, nrow(od), ncol(od)))
+  }
 
   syn_seed <- base_seed + (idx * 1000)
 
@@ -76,9 +83,6 @@ for (idx in seq_along(od_files)) {
   sd_path <- file.path(output_dir, sd_name)
 
   write.csv(sd, sd_path, row.names = FALSE)
-
-  cat(sprintf("[INFO] Saved SD: %s  (dim: %d x %d)\n\n",
-              sd_name, nrow(sd), ncol(sd)))
 }
 
-cat("[DONE] Synthetic data generation complete.\n")
+cat(sprintf("\n[DONE] Synthetic data generation complete. %d file(s) written.\n", total))

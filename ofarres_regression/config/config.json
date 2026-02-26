@@ -5,7 +5,8 @@
     "sigma_2": 1,
     "random_seed_base": 16,
     "test_seed": 123,
-    "N_test": 10000
+    "N_test": 10000,
+    "M": 50
   },
   "parameters": {
     "rho": [0.0, 0.3, 0.5],

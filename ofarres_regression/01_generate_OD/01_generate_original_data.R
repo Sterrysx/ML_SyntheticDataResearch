@@ -39,11 +39,12 @@ N          <- config$simulation$N
 p          <- config$simulation$p
 sigma_2    <- config$simulation$sigma_2
 base_seed  <- config$simulation$random_seed_base
+M          <- config$simulation$M            # number of repetitions
 rho_vals   <- config$parameters$rho
 beta       <- config$parameters$beta   # length p + 1 (intercept + p slopes)
 
-cat(sprintf("Configuration loaded: N=%d, p=%d, sigma_2=%.1f, seed=%d\n",
-            N, p, sigma_2, base_seed))
+cat(sprintf("Configuration loaded: N=%d, p=%d, sigma_2=%.1f, seed=%d, M=%d\n",
+            N, p, sigma_2, base_seed, M))
 cat(sprintf("Rho values: %s\n", paste(rho_vals, collapse = ", ")))
 cat(sprintf("Beta vector: [%s]\n\n", paste(beta, collapse = ", ")))
 
@@ -84,26 +85,36 @@ generate_od <- function(N, p, rho, beta, sigma_2, seed) {
   return(df)
 }
 
-# 4. Main Generation Loop
+# 4. Main Generation Loop (M repetitions per rho)
 # ------------------------------------------------------------------------------
 output_dir <- file.path("..", "data", "original")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-cat(sprintf("Generating %d OD dataset(s)...\n\n", length(rho_vals)))
+total_datasets <- length(rho_vals) * M
+cat(sprintf("Generating %d OD dataset(s): %d rho values x %d repetitions...\n\n",
+            total_datasets, length(rho_vals), M))
 
+count <- 0
 for (idx in seq_along(rho_vals)) {
-  rho  <- rho_vals[idx]
-  seed <- base_seed + idx
+  rho <- rho_vals[idx]
 
-  od <- generate_od(N = N, p = p, rho = rho, beta = beta,
-                    sigma_2 = sigma_2, seed = seed)
+  for (m in seq_len(M)) {
+    # Unique seed for each (rho, rep) combination
+    seed <- base_seed + (idx * 1000) + m
 
-  fname <- sprintf("OD_N%d_p%d_rho%.1f.csv", N, p, rho)
-  fpath <- file.path(output_dir, fname)
-  write.csv(od, fpath, row.names = FALSE)
+    od <- generate_od(N = N, p = p, rho = rho, beta = beta,
+                      sigma_2 = sigma_2, seed = seed)
 
-  cat(sprintf("[INFO] Saved OD: %s  (dim: %d x %d, rho=%.1f)\n",
-              fname, nrow(od), ncol(od), rho))
+    fname <- sprintf("OD_N%d_p%d_rho%.1f_rep%d.csv", N, p, rho, m)
+    fpath <- file.path(output_dir, fname)
+    write.csv(od, fpath, row.names = FALSE)
+
+    count <- count + 1
+    if (m == 1 || m == M || m %% 10 == 0) {
+      cat(sprintf("[INFO] Saved OD: %s  (dim: %d x %d, rho=%.1f, rep=%d)  [%d/%d]\n",
+                  fname, nrow(od), ncol(od), rho, m, count, total_datasets))
+    }
+  }
 }
 
-cat("\n[DONE] Original data generation complete.\n")
+cat(sprintf("\n[DONE] Original data generation complete. %d files written.\n", count))

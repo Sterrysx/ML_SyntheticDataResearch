@@ -8,6 +8,9 @@
 ofarres/data/real/*.csv
 ofarres/data/synthetic/*.csv
 
+ofarres_regression/data/real/*.csv
+ofarres_regression/data/real/*.csv
+
 # Keep directory structure
 !ofarres/data/real/.gitkeep
 !ofarres/data/synthetic/.gitkeep
