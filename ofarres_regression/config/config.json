@@ -1,18 +1,18 @@
 {
   "simulation": {
-    "N": 10000,
+    "N": 1000,
     "p": 10,
-    "sigma_2": 1,
     "random_seed_base": 16,
     "test_seed": 123,
     "N_test": 10000,
-    "M": 50
+    "M": 100
   },
   "parameters": {
-    "rho": [0.0, 0.3, 0.5],
+    "rho": [0.0, 0.3, 0.6],
+    "sigma_2": [1.0, 1.5, 2.0],
     "beta": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
   },
   "synthesis": {
-    "method": "cart"
+    "methods": ["cart", "norm", "pmm"]
   }
 }

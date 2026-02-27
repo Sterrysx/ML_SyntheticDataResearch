@@ -80,7 +80,7 @@ log_success "Python installation verified ($PYTHON_CMD)"
 
 # Check Python packages
 log_info "Checking Python dependencies..."
-$PYTHON_CMD -c "import pandas, numpy, sklearn, matplotlib, seaborn" 2>/dev/null
+$PYTHON_CMD -c "import pandas, numpy, sklearn, matplotlib, seaborn, scipy" 2>/dev/null
 if [ $? -ne 0 ]; then
     log_warning "Some Python packages are missing. Installing from requirements.txt..."
     pip install -r requirements.txt
@@ -131,7 +131,7 @@ echo ""
 # ==============================================================================
 # STEP 2: Generate Synthetic Data (R)
 # ==============================================================================
-log_info "STEP 2: Generating Synthetic Data (SD) via CART ..."
+log_info "STEP 2: Generating Synthetic Data (SD) via CART, NORM, PMM ..."
 echo ""
 
 cd 02_generate_SD
@@ -158,74 +158,11 @@ log_success "SD generation complete in ${DURATION}s (${SD_COUNT} file(s))"
 cd ..
 echo ""
 
-# ==============================================================================
-# STEP 3: Regression Analysis (Jupyter Notebook)
-# ==============================================================================
-log_info "STEP 3: Running regression analysis notebook ..."
-echo ""
-
-cd 03_regression_analysis
-
-# Clear old models
-if [ -d "../models" ]; then
-    rm -f ../models/*.pkl 2>/dev/null || true
-fi
-
-START_TIME=$(date +%s)
-$PYTHON_CMD -m jupyter nbconvert --to notebook --execute \
-    03_regression_analysis.ipynb \
-    --output 03_regression_analysis_executed.ipynb \
-    --ExecutePreprocessor.timeout=300
-
-if [ $? -ne 0 ]; then
-    log_warning "Notebook execution via nbconvert failed. Trying papermill..."
-    if command -v papermill &> /dev/null; then
-        papermill 03_regression_analysis.ipynb 03_regression_analysis_executed.ipynb
-    else
-        log_error "Could not execute notebook automatically."
-        log_info "Please run manually: jupyter notebook 03_regression_analysis.ipynb"
-        exit 1
-    fi
-fi
-
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
-
-MODEL_COUNT=$(ls -1 ../models/models_*.pkl 2>/dev/null | wc -l)
-log_success "Regression analysis complete in ${DURATION}s (${MODEL_COUNT} model pair(s))"
-cd ..
-echo ""
-
-# ==============================================================================
-# STEP 4: Evaluate Similarity (Jupyter Notebook)
-# ==============================================================================
-log_info "STEP 4: Running evaluation notebook ..."
-echo ""
-
-cd 04_evaluation
-
-START_TIME=$(date +%s)
-$PYTHON_CMD -m jupyter nbconvert --to notebook --execute \
-    04_evaluate_similarity.ipynb \
-    --output 04_evaluate_similarity_executed.ipynb \
-    --ExecutePreprocessor.timeout=300
-
-if [ $? -ne 0 ]; then
-    log_warning "Notebook execution via nbconvert failed. Trying papermill..."
-    if command -v papermill &> /dev/null; then
-        papermill 04_evaluate_similarity.ipynb 04_evaluate_similarity_executed.ipynb
-    else
-        log_error "Could not execute notebook automatically."
-        log_info "Please run manually: jupyter notebook 04_evaluate_similarity.ipynb"
-        exit 1
-    fi
-fi
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
 log_success "Evaluation complete in ${DURATION}s"
-cd ..
 echo ""
 
 # ==============================================================================

@@ -7,7 +7,9 @@
 # Predictors X ~ MVN(0, Sigma) where Sigma has 1s on the diagonal and rho on
 # the off-diagonals.  Response y = X %*% beta + epsilon, epsilon ~ N(0, sigma_2).
 #
-# Outputs:  ../data/original/OD_N<N>_p<p>_rho<rho>.csv
+# Now loops over BOTH rho AND sigma_2 from config.json.
+#
+# Outputs:  ../data/original/OD_N<N>_p<p>_rho<rho>_sigma<sigma>_rep<m>.csv
 # ==============================================================================
 
 # 1. Setup & Imports
@@ -35,18 +37,18 @@ if (!file.exists(config_path)) {
 
 config <- fromJSON(config_path)
 
-N          <- config$simulation$N
-p          <- config$simulation$p
-sigma_2    <- config$simulation$sigma_2
-base_seed  <- config$simulation$random_seed_base
-M          <- config$simulation$M            # number of repetitions
-rho_vals   <- config$parameters$rho
-beta       <- config$parameters$beta   # length p + 1 (intercept + p slopes)
+N            <- config$simulation$N
+p            <- config$simulation$p
+base_seed    <- config$simulation$random_seed_base
+M            <- config$simulation$M
+rho_vals     <- config$parameters$rho
+sigma_2_vals <- config$parameters$sigma_2
+beta         <- config$parameters$beta   # length p + 1 (intercept + p slopes)
 
-cat(sprintf("Configuration loaded: N=%d, p=%d, sigma_2=%.1f, seed=%d, M=%d\n",
-            N, p, sigma_2, base_seed, M))
-cat(sprintf("Rho values: %s\n", paste(rho_vals, collapse = ", ")))
-cat(sprintf("Beta vector: [%s]\n\n", paste(beta, collapse = ", ")))
+cat(sprintf("Configuration loaded: N=%d, p=%d, seed=%d, M=%d\n", N, p, base_seed, M))
+cat(sprintf("Rho values:     %s\n", paste(rho_vals, collapse = ", ")))
+cat(sprintf("Sigma_2 values: %s\n", paste(sigma_2_vals, collapse = ", ")))
+cat(sprintf("Beta vector:    [%s]\n\n", paste(beta, collapse = ", ")))
 
 # 3. Helper Functions
 # ------------------------------------------------------------------------------
@@ -85,34 +87,38 @@ generate_od <- function(N, p, rho, beta, sigma_2, seed) {
   return(df)
 }
 
-# 4. Main Generation Loop (M repetitions per rho)
+# 4. Main Generation Loop (rho x sigma_2 x M repetitions)
 # ------------------------------------------------------------------------------
 output_dir <- file.path("..", "data", "original")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-total_datasets <- length(rho_vals) * M
-cat(sprintf("Generating %d OD dataset(s): %d rho values x %d repetitions...\n\n",
-            total_datasets, length(rho_vals), M))
+total_datasets <- length(rho_vals) * length(sigma_2_vals) * M
+cat(sprintf("Generating %d OD dataset(s): %d rho x %d sigma_2 x %d reps...\n\n",
+            total_datasets, length(rho_vals), length(sigma_2_vals), M))
 
 count <- 0
-for (idx in seq_along(rho_vals)) {
-  rho <- rho_vals[idx]
+for (ri in seq_along(rho_vals)) {
+  rho <- rho_vals[ri]
 
-  for (m in seq_len(M)) {
-    # Unique seed for each (rho, rep) combination
-    seed <- base_seed + (idx * 1000) + m
+  for (si in seq_along(sigma_2_vals)) {
+    sigma_2 <- sigma_2_vals[si]
 
-    od <- generate_od(N = N, p = p, rho = rho, beta = beta,
-                      sigma_2 = sigma_2, seed = seed)
+    for (m in seq_len(M)) {
+      # Unique seed for each (rho, sigma_2, rep) combination
+      seed <- base_seed + (ri * 10000) + (si * 1000) + m
 
-    fname <- sprintf("OD_N%d_p%d_rho%.1f_rep%d.csv", N, p, rho, m)
-    fpath <- file.path(output_dir, fname)
-    write.csv(od, fpath, row.names = FALSE)
+      od <- generate_od(N = N, p = p, rho = rho, beta = beta,
+                        sigma_2 = sigma_2, seed = seed)
 
-    count <- count + 1
-    if (m == 1 || m == M || m %% 10 == 0) {
-      cat(sprintf("[INFO] Saved OD: %s  (dim: %d x %d, rho=%.1f, rep=%d)  [%d/%d]\n",
-                  fname, nrow(od), ncol(od), rho, m, count, total_datasets))
+      fname <- sprintf("OD_N%d_p%d_rho%.1f_sigma%.1f_rep%d.csv", N, p, rho, sigma_2, m)
+      fpath <- file.path(output_dir, fname)
+      write.csv(od, fpath, row.names = FALSE)
+
+      count <- count + 1
+      if (m == 1 || m == M || m %% 25 == 0) {
+        cat(sprintf("[INFO] %s  (rho=%.1f, sigma=%.1f, rep=%d)  [%d/%d]\n",
+                    fname, rho, sigma_2, m, count, total_datasets))
+      }
     }
   }
 }
