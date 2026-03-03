@@ -1,15 +1,17 @@
 {
   "simulation": {
-    "N": 1000,
-    "p": 10,
+    "N": [100, 1000],
+    "p": [3, 10],
+    "var_type": ["continuous", "binary"],
     "random_seed_base": 16,
     "test_seed": 123,
     "N_test": 10000,
-    "M": 100
+    "M": 10
   },
   "parameters": {
     "rho": [0.0, 0.3, 0.6],
     "sigma_2": [1.0, 1.5, 2.0],
+    "p1": [0.5],
     "beta": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
   },
   "synthesis": {
