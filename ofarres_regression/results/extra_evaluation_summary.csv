@@ -1,0 +1,7 @@
+method,var_type,n,ci_overlap_mean,ci_overlap_median,ci_overlap_std,mape_sd_mean,mape_sd_std,ci_width_ratio_mean,signed_bias_mean
+cart,binary,36000,45.983,43.193,16.695,43.155,35.288,1.184,-0.078
+cart,continuous,36000,30.135,24.942,18.71,38.159,28.214,1.964,-0.184
+norm,binary,36000,51.92,51.943,12.773,31.367,21.05,1.147,0.118
+norm,continuous,36000,7.163,2.423,8.445,102.321,33.363,4.042,0.995
+pmm,binary,36000,58.889,58.754,12.647,27.281,21.857,1.015,-0.009
+pmm,continuous,36000,57.478,58.049,11.945,14.037,10.351,1.055,-0.014
