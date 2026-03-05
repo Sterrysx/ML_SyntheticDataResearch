@@ -14,6 +14,12 @@ ofarres_regression/data/synthetic/*
 
 ofarres_regression/data/*
 
+# Ignore the heavy raw results, but keep the summary and plots
+ofarres_regression/results/aggregated_model_metrics.parquet
+
+ofarres_regression/results/evaluation_metrics.parquet
+ofarres_regression/results/figures/
+
 # Keep the directory structure intact (optional but recommended)
 !ofarres_regression/data/original/.gitkeep
 !ofarres_regression/data/synthetic/.gitkeep
