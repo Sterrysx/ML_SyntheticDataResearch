@@ -11,6 +11,7 @@ ofarres/data/synthetic/*.csv
 # Ignore all files in the ofarres_regression data folders
 ofarres_regression/data/original/*
 ofarres_regression/data/synthetic/*
+ofarres_regression/data/*
 
 # Keep the directory structure intact (optional but recommended)
 !ofarres_regression/data/original/.gitkeep
