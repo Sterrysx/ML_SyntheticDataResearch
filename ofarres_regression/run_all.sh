@@ -15,6 +15,7 @@ set -e  # Exit on any error
 # ==============================================================================
 cleanup() {
     pkill -f "sd_worker.R" 2>/dev/null || true
+    pkill -f "od_worker.R" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
