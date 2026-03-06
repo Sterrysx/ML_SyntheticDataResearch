@@ -2,27 +2,7 @@
 # SCRIPT: 01_generate_original_data.R
 # PURPOSE: Generate Original Data (OD) for a multiple linear regression
 #          simulation using parameters from config.json.
-# ==============================================================================
-#
-# Supports TWO variable types (controlled by config$simulation$var_type):
-#
-#   "continuous" — X ~ MVN(0, Sigma) via mvtnorm::rmvnorm.
-#   "binary"     — X ~ correlated Bernoulli via MultiDiscreteRNG.
-#                  Marginal P(X_j = 1) = p1 (from config); correlation = rho.
-#
-# Response (always continuous):
-#   y = cbind(1, X) %*% beta[1:(p+1)] + N(0, sigma_2)
-#
-# Parameter grid: var_type x N x p x rho x sigma_2 x (p1 if binary) x 1:M
-#
-# Parallelisation: parallel::mclapply (fork-based) on all-but-2 cores.
-#                  Tasks are processed in batches so live progress is shown.
-#                  All parent-env variables (bin_cache, beta_full, etc.) are
-#                  inherited automatically by forked workers — no clusterExport.
-#
-# Output filenames:
-#   OD_{var_type}_N{N}_p{p}_rho{rho}_sig{sigma_2}_p1{p1}_iter{padded_m}.csv
-#   (continuous files use p1=NA for completeness)
+#          ** NOW FULLY OPTIMIZED FOR PARQUET & PARALLEL CACHING **
 # ==============================================================================
 
 # 1. Setup & Imports
@@ -30,8 +10,6 @@
 ensure_package <- function(pkg) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
     message(paste("Installing package:", pkg))
-    # Use only hard dependencies (Depends/Imports/LinkingTo), NOT Suggests.
-    # This avoids pulling in system-level extras like MPI, Redis, etc.
     install.packages(pkg, repos = "http://cran.us.r-project.org",
                      dependencies = c("Depends", "Imports", "LinkingTo"))
     if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
@@ -43,11 +21,13 @@ ensure_package <- function(pkg) {
 ensure_package("jsonlite")
 ensure_package("mvtnorm")
 ensure_package("MultiDiscreteRNG")
+ensure_package("arrow") # Added for Parquet
 
 library(jsonlite)
 library(mvtnorm)
 library(MultiDiscreteRNG)
 library(parallel)
+library(arrow)
 
 # 2. Load Configuration
 # ------------------------------------------------------------------------------
@@ -82,9 +62,6 @@ cat(sprintf("  beta:      [%s]  (will be subset to p+1)\n\n",
 
 # 3. Build full parameter grid
 # ------------------------------------------------------------------------------
-# For continuous: p1 is irrelevant, so we use a sentinel value of NA.
-# For binary:     we expand over all p1 values.
-
 grid_parts <- list()
 
 if ("continuous" %in% var_types) {
@@ -106,7 +83,7 @@ if ("binary" %in% var_types) {
     N        = N_vals,
     p        = p_vals,
     rho      = rho_vals,
-    sigma_2  = sigma_2_vals,
+    sigma_2  = NA_real_,  
     p1       = p1_vals,
     m        = seq_len(M),
     stringsAsFactors = FALSE
@@ -125,7 +102,6 @@ cat(sprintf("[INFO] Parameter grid: %d rows  (%d scenarios x %d iterations).\n",
 output_dir <- file.path("..", "data", "original")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-# Padding width for iteration numbers (e.g., 1000 -> 4 digits)
 pad_width <- nchar(as.character(M))
 
 # 5. Parallel setup
@@ -141,28 +117,23 @@ make_sigma_mat <- function(p, rho) {
   S
 }
 
-# 7. Pre-compute binary correlation objects (expensive; do once per combo)
+# 7. Pre-compute binary correlation objects IN PARALLEL
 # ------------------------------------------------------------------------------
-# simBinaryCorr.B is O(100k rows) and only depends on (p, rho, p1).
-# We cache one object per unique (p, rho, p1) triple.
-
 bin_combos <- unique(grid[grid$var_type == "binary", c("p", "rho", "p1")])
 bin_cache  <- list()
 
 if (nrow(bin_combos) > 0L) {
-  cat(sprintf("[INFO] Pre-computing %d binary correlation objects...\n",
+  cat(sprintf("[INFO] Pre-computing %d binary correlation objects in parallel...\n",
               nrow(bin_combos)))
-  for (i in seq_len(nrow(bin_combos))) {
+  
+  # Function to compute a single correlation object
+  compute_bin_obj <- function(i) {
     pp   <- bin_combos$p[i]
     rrho <- bin_combos$rho[i]
     pp1  <- bin_combos$p1[i]
     key  <- paste(pp, rrho, pp1, sep = "_")
-
     Sigma <- make_sigma_mat(pp, rrho)
 
-    # simBinaryCorr.B: calibrate internal Gaussian cutpoint matrix.
-    # The package prints to BOTH stdout (cat) and stderr (message).
-    # Suppress all of it:
     invisible(capture.output(
       suppressMessages(
         bin_obj <- simBinaryCorr.B(
@@ -174,21 +145,32 @@ if (nrow(bin_combos) > 0L) {
       ),
       type = "output"
     ))
-    bin_cache[[key]] <- bin_obj
-    cat(sprintf("  [cache] p=%d  rho=%.1f  p1=%.2f  -> OK\n", pp, rrho, pp1))
+    # Return both the key and the object to assign later
+    list(key = key, obj = bin_obj)
+  }
+
+  # Run the computation across available cores
+  cache_results <- mclapply(seq_len(nrow(bin_combos)), compute_bin_obj, 
+                            mc.cores = min(n_cores, nrow(bin_combos)))
+
+  # Assemble the cache list from the parallel results
+  for (res in cache_results) {
+    if (!inherits(res, "try-error")) {
+      bin_cache[[res$key]] <- res$obj
+      cat(sprintf("  [cache] %s -> OK\n", res$key))
+    } else {
+      cat(sprintf("  [cache ERROR] %s\n", as.character(res)))
+    }
   }
   cat("\n")
 }
 
-# (no clusterExport needed — mclapply forks the parent process, so bin_cache
-#  and make_sigma_mat are available in workers automatically)
-
-# 8. Pre-generate reproducible per-task seeds from base_seed
+# 8. Pre-generate reproducible per-task seeds
 # ------------------------------------------------------------------------------
 set.seed(base_seed)
 grid$task_seed <- sample.int(.Machine$integer.max, n_grid)
 
-# 9. Single-task worker (called inside mclapply)
+# 9. Single-task worker
 # ------------------------------------------------------------------------------
 run_task <- function(row) {
   tryCatch({
@@ -209,11 +191,9 @@ run_task <- function(row) {
     } else {
       key     <- paste(p_cur, rho_cur, p1_cur, sep = "_")
       bin_obj <- bin_cache[[key]]
-    # genB() may return a data.frame with factor columns, a matrix, or mixed.
-    # Flatten → character (handles factors) → numeric → reshape to N × p.
-    X_raw   <- genB(no.rows = N_cur, binObj = bin_obj)
-    X       <- matrix(as.numeric(as.character(unlist(X_raw))),
-                      nrow = N_cur, ncol = p_cur)
+      X_raw   <- genB(no.rows = N_cur, binObj = bin_obj)
+      X       <- matrix(as.numeric(as.character(unlist(X_raw))),
+                        nrow = N_cur, ncol = p_cur)
     }
 
     X_design <- cbind(1, X)
@@ -227,20 +207,18 @@ run_task <- function(row) {
     p1_str   <- if (is.na(p1_cur)) "NA" else sprintf("%.2f", p1_cur)
     m_padded <- formatC(as.integer(row$m), width = pad_width, flag = "0")
 
-    fname <- sprintf("OD_%s_N%d_p%d_rho%.1f_sig%.1f_p1%s_iter%s.csv",
+    # Output Parquet instead of CSV
+    fname <- sprintf("OD_%s_N%d_p%d_rho%.1f_sig%.1f_p1%s_iter%s.parquet",
                      vtype, N_cur, p_cur, rho_cur, sig2_cur, p1_str, m_padded)
-    write.csv(df, file.path(output_dir, fname), row.names = FALSE)
+    write_parquet(df, file.path(output_dir, fname))
     fname
   }, error = function(e) {
-    # Return the error message as a tagged string so the caller can detect it.
     paste0("ERROR:", conditionMessage(e))
   })
 }
 
 # 10. Batched parallel loop with live progress
 # ------------------------------------------------------------------------------
-# Batch size: enough tasks to keep all cores busy between progress updates.
-# n_cores * 50 = ~1100 tasks per print line at 22 cores.
 BATCH_SIZE <- n_cores * 50L
 n_batches  <- ceiling(n_grid / BATCH_SIZE)
 
@@ -265,27 +243,16 @@ for (b in seq_len(n_batches)) {
   for (j in seq_along(batch_res)) {
     r <- batch_res[[j]]
     if (inherits(r, "try-error")) {
-      # mclapply-level failure (fork crash, signal, etc.)
       n_errors <- n_errors + 1L
-      if (n_errors <= 5L) {
-        cat(sprintf("\n[WARN] Task %d (mclapply): %s",
-                    i_start + j - 1L, as.character(r)))
-      }
+      if (n_errors <= 5L) cat(sprintf("\n[WARN] Task %d (mclapply): %s", i_start + j - 1L, as.character(r)))
     } else if (is.character(r) && startsWith(r, "ERROR:")) {
-      # Our tryCatch-level failure (R error inside the worker).
       n_errors <- n_errors + 1L
-      if (n_errors <= 5L) {
-        cat(sprintf("\n[WARN] Task %d: %s",
-                    i_start + j - 1L, sub("^ERROR:", "", r)))
-      }
+      if (n_errors <= 5L) cat(sprintf("\n[WARN] Task %d: %s", i_start + j - 1L, sub("^ERROR:", "", r)))
     } else if (is.character(r) && length(r) == 1L) {
       all_names[i_start + j - 1L] <- r
     } else {
       n_errors <- n_errors + 1L
-      if (n_errors <= 5L) {
-        cat(sprintf("\n[WARN] Task %d: unexpected result type %s",
-                    i_start + j - 1L, class(r)[1]))
-      }
+      if (n_errors <= 5L) cat(sprintf("\n[WARN] Task %d: unexpected result type %s", i_start + j - 1L, class(r)[1]))
     }
   }
   if (n_errors > 5L) {

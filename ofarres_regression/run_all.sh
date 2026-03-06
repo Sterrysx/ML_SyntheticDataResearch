@@ -106,10 +106,10 @@ echo ""
 
 cd 01_generate_OD
 
-# Clear old data
+# Clear old data (Fixed for Parquet)
 if [ -d "../data/original" ]; then
     log_warning "Removing old original data..."
-    rm -f ../data/original/*.csv 2>/dev/null || true
+    rm -f ../data/original/*.parquet 2>/dev/null || true
 fi
 
 START_TIME=$(date +%s)
@@ -123,7 +123,8 @@ fi
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
-OD_COUNT=$(ls -1 ../data/original/OD_*.csv 2>/dev/null | wc -l)
+# Fixed counting for Parquet files
+OD_COUNT=$(ls -1 ../data/original/OD_*.parquet 2>/dev/null | wc -l)
 log_success "OD generation complete in ${DURATION}s (${OD_COUNT} file(s))"
 cd ..
 echo ""
@@ -136,10 +137,10 @@ echo ""
 
 cd 02_generate_SD
 
-# Clear old data
+# Clear old data (Fixed for Parquet)
 if [ -d "../data/synthetic" ]; then
     log_warning "Removing old synthetic data..."
-    rm -f ../data/synthetic/*.csv 2>/dev/null || true
+    rm -f ../data/synthetic/*.parquet 2>/dev/null || true
 fi
 
 START_TIME=$(date +%s)
@@ -153,7 +154,8 @@ fi
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
-SD_COUNT=$(ls -1 ../data/synthetic/SD_*.csv 2>/dev/null | wc -l)
+# Fixed counting for Parquet files
+SD_COUNT=$(ls -1 ../data/synthetic/SD_*.parquet 2>/dev/null | wc -l)
 log_success "SD generation complete in ${DURATION}s (${SD_COUNT} file(s))"
 cd ..
 echo ""
@@ -169,7 +171,7 @@ echo ""
 # FINAL SUMMARY
 # ==============================================================================
 echo "=============================================================================="
-echo "                      PIPELINE EXECUTION COMPLETE                             "
+echo "                    PIPELINE EXECUTION COMPLETE                              "
 echo "=============================================================================="
 echo ""
 log_success "All steps completed successfully!"

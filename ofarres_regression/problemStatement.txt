@@ -1,0 +1,664 @@
+I am doing synthetic data research on OD vs SD. I started analyzing clustering methods: K-means with Hierarchical clustering.
+But I am now in the 2nd part of the research, doing a regression analysis with 3 different methods: CART, NORM and PMM.
+Initially I did research on just continous variables, and I got some clear results: CART got very bad results whereas NORM and PMM maintained pretty good results.
+Then my research tutor proposed trying also with binary variables. After a lot of problems with coding and memory leak problems, I finally had my newer results, which where counterintuitive. Which leads me to thinking I must have committed an error somewhere in my code, probably with the concatening of the files, when parsing all the separate files into 2 unitary files being OD and SD parquet files.
+
+Here is the config.json where all the parameters are defined:
+{
+  "simulation": {
+    "N": [100, 1000],
+    "p": [3, 10],
+    "var_type": ["continuous", "binary"],
+    "random_seed_base": 16,
+    "test_seed": 123,
+    "N_test": 10000,
+    "M": 10
+  },
+  "parameters": {
+    "rho": [0.0, 0.3, 0.6],
+    "sigma_2": [1.0, 1.5, 2.0],
+    "p1": [0.5],
+    "beta": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  },
+  "synthesis": {
+    "methods": ["cart", "norm", "pmm"]
+  }
+}
+
+Here are the data generation methods, in R:
+
+generateOD.R:
+# ==============================================================================
+# SCRIPT: 01_generate_original_data.R
+# PURPOSE: Generate Original Data (OD) for a multiple linear regression
+#          simulation using parameters from config.json.
+# ==============================================================================
+#
+# Supports TWO variable types (controlled by config$simulation$var_type):
+#
+#   "continuous" — X ~ MVN(0, Sigma) via mvtnorm::rmvnorm.
+#   "binary"     — X ~ correlated Bernoulli via MultiDiscreteRNG.
+#                  Marginal P(X_j = 1) = p1 (from config); correlation = rho.
+#
+# Response (always continuous):
+#   y = cbind(1, X) %*% beta[1:(p+1)] + N(0, sigma_2)
+#
+# Parameter grid: var_type x N x p x rho x sigma_2 x (p1 if binary) x 1:M
+#
+# Parallelisation: parallel::mclapply (fork-based) on all-but-2 cores.
+#                  Tasks are processed in batches so live progress is shown.
+#                  All parent-env variables (bin_cache, beta_full, etc.) are
+#                  inherited automatically by forked workers — no clusterExport.
+#
+# Output filenames:
+#   OD_{var_type}_N{N}_p{p}_rho{rho}_sig{sigma_2}_p1{p1}_iter{padded_m}.csv
+#   (continuous files use p1=NA for completeness)
+# ==============================================================================
+
+# 1. Setup & Imports
+# ------------------------------------------------------------------------------
+ensure_package <- function(pkg) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    message(paste("Installing package:", pkg))
+    # Use only hard dependencies (Depends/Imports/LinkingTo), NOT Suggests.
+    # This avoids pulling in system-level extras like MPI, Redis, etc.
+    install.packages(pkg, repos = "http://cran.us.r-project.org",
+                     dependencies = c("Depends", "Imports", "LinkingTo"))
+    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+      stop(paste("Failed to install package:", pkg))
+    }
+  }
+}
+
+ensure_package("jsonlite")
+ensure_package("mvtnorm")
+ensure_package("MultiDiscreteRNG")
+
+library(jsonlite)
+library(mvtnorm)
+library(MultiDiscreteRNG)
+library(parallel)
+
+# 2. Load Configuration
+# ------------------------------------------------------------------------------
+config_path <- "../config/config.json"
+if (!file.exists(config_path)) {
+  stop("config.json not found! Please ensure it is at ../config/config.json")
+}
+
+config <- fromJSON(config_path)
+
+N_vals       <- config$simulation$N
+p_vals       <- config$simulation$p
+var_types    <- config$simulation$var_type
+base_seed    <- config$simulation$random_seed_base
+M            <- config$simulation$M
+
+rho_vals     <- config$parameters$rho
+sigma_2_vals <- config$parameters$sigma_2
+p1_vals      <- config$parameters$p1
+beta_full    <- config$parameters$beta   # length >= max(p) + 1
+
+cat("[INFO] Configuration loaded.\n")
+cat(sprintf("  N:         %s\n", paste(N_vals, collapse = ", ")))
+cat(sprintf("  p:         %s\n", paste(p_vals, collapse = ", ")))
+cat(sprintf("  var_type:  %s\n", paste(var_types, collapse = ", ")))
+cat(sprintf("  rho:       %s\n", paste(rho_vals, collapse = ", ")))
+cat(sprintf("  sigma_2:   %s\n", paste(sigma_2_vals, collapse = ", ")))
+cat(sprintf("  p1:        %s\n", paste(p1_vals, collapse = ", ")))
+cat(sprintf("  M:         %d\n", M))
+cat(sprintf("  beta:      [%s]  (will be subset to p+1)\n\n",
+            paste(beta_full, collapse = ", ")))
+
+# 3. Build full parameter grid
+# ------------------------------------------------------------------------------
+# For continuous: p1 is irrelevant, so we use a sentinel value of NA.
+# For binary:     we expand over all p1 values.
+
+grid_parts <- list()
+
+if ("continuous" %in% var_types) {
+  grid_parts[["cont"]] <- expand.grid(
+    var_type = "continuous",
+    N        = N_vals,
+    p        = p_vals,
+    rho      = rho_vals,
+    sigma_2  = sigma_2_vals,
+    p1       = NA_real_,
+    m        = seq_len(M),
+    stringsAsFactors = FALSE
+  )
+}
+
+if ("binary" %in% var_types) {
+  grid_parts[["bin"]] <- expand.grid(
+    var_type = "binary",
+    N        = N_vals,
+    p        = p_vals,
+    rho      = rho_vals,
+    sigma_2  = NA_real_,  # Not used for binary; set to NA for clarity.
+    p1       = p1_vals,
+    m        = seq_len(M),
+    stringsAsFactors = FALSE
+  )
+}
+
+grid <- do.call(rbind, grid_parts)
+rownames(grid) <- NULL
+n_grid <- nrow(grid)
+
+cat(sprintf("[INFO] Parameter grid: %d rows  (%d scenarios x %d iterations).\n",
+            n_grid, n_grid %/% M, M))
+
+# 4. Prepare output directory
+# ------------------------------------------------------------------------------
+output_dir <- file.path("..", "data", "original")
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Padding width for iteration numbers (e.g., 1000 -> 4 digits)
+pad_width <- nchar(as.character(M))
+
+# 5. Parallel setup
+# ------------------------------------------------------------------------------
+n_cores <- max(1L, detectCores() - 2L)
+cat(sprintf("[INFO] Using %d cores (mclapply, fork-based).\n\n", n_cores))
+
+# 6. Helper: build equi-correlation matrix
+# ------------------------------------------------------------------------------
+make_sigma_mat <- function(p, rho) {
+  S <- matrix(rho, nrow = p, ncol = p)
+  diag(S) <- 1
+  S
+}
+
+# 7. Pre-compute binary correlation objects (expensive; do once per combo)
+# ------------------------------------------------------------------------------
+# simBinaryCorr.B is O(100k rows) and only depends on (p, rho, p1).
+# We cache one object per unique (p, rho, p1) triple.
+
+bin_combos <- unique(grid[grid$var_type == "binary", c("p", "rho", "p1")])
+bin_cache  <- list()
+
+if (nrow(bin_combos) > 0L) {
+  cat(sprintf("[INFO] Pre-computing %d binary correlation objects...\n",
+              nrow(bin_combos)))
+  for (i in seq_len(nrow(bin_combos))) {
+    pp   <- bin_combos$p[i]
+    rrho <- bin_combos$rho[i]
+    pp1  <- bin_combos$p1[i]
+    key  <- paste(pp, rrho, pp1, sep = "_")
+
+    Sigma <- make_sigma_mat(pp, rrho)
+
+    # simBinaryCorr.B: calibrate internal Gaussian cutpoint matrix.
+    # The package prints to BOTH stdout (cat) and stderr (message).
+    # Suppress all of it:
+    invisible(capture.output(
+      suppressMessages(
+        bin_obj <- simBinaryCorr.B(
+          B.n.vec    = rep(1, pp),
+          B.prob.vec = rep(pp1, pp),
+          CorrMat    = Sigma,
+          no.rows    = 100000
+        )
+      ),
+      type = "output"
+    ))
+    bin_cache[[key]] <- bin_obj
+    cat(sprintf("  [cache] p=%d  rho=%.1f  p1=%.2f  -> OK\n", pp, rrho, pp1))
+  }
+  cat("\n")
+}
+
+# (no clusterExport needed — mclapply forks the parent process, so bin_cache
+#  and make_sigma_mat are available in workers automatically)
+
+# 8. Pre-generate reproducible per-task seeds from base_seed
+# ------------------------------------------------------------------------------
+set.seed(base_seed)
+grid$task_seed <- sample.int(.Machine$integer.max, n_grid)
+
+# 9. Single-task worker (called inside mclapply)
+# ------------------------------------------------------------------------------
+run_task <- function(row) {
+  tryCatch({
+    set.seed(row$task_seed)
+
+    vtype    <- row$var_type
+    N_cur    <- as.integer(row$N)
+    p_cur    <- as.integer(row$p)
+    rho_cur  <- row$rho
+    sig2_cur <- row$sigma_2
+    p1_cur   <- row$p1
+
+    current_beta <- beta_full[1:(p_cur + 1L)]
+    Sigma        <- make_sigma_mat(p_cur, rho_cur)
+
+    if (vtype == "continuous") {
+      X <- rmvnorm(n = N_cur, mean = rep(0, p_cur), sigma = Sigma)
+    } else {
+      key     <- paste(p_cur, rho_cur, p1_cur, sep = "_")
+      bin_obj <- bin_cache[[key]]
+    # genB() may return a data.frame with factor columns, a matrix, or mixed.
+    # Flatten → character (handles factors) → numeric → reshape to N × p.
+    X_raw   <- genB(no.rows = N_cur, binObj = bin_obj)
+    X       <- matrix(as.numeric(as.character(unlist(X_raw))),
+                      nrow = N_cur, ncol = p_cur)
+    }
+
+    X_design <- cbind(1, X)
+    epsilon  <- rnorm(N_cur, mean = 0, sd = sqrt(sig2_cur))
+    y        <- as.numeric(X_design %*% current_beta + epsilon)
+
+    df           <- as.data.frame(X)
+    colnames(df) <- paste0("X", seq_len(p_cur))
+    df$y         <- y
+
+    p1_str   <- if (is.na(p1_cur)) "NA" else sprintf("%.2f", p1_cur)
+    m_padded <- formatC(as.integer(row$m), width = pad_width, flag = "0")
+
+    fname <- sprintf("OD_%s_N%d_p%d_rho%.1f_sig%.1f_p1%s_iter%s.csv",
+                     vtype, N_cur, p_cur, rho_cur, sig2_cur, p1_str, m_padded)
+    write.csv(df, file.path(output_dir, fname), row.names = FALSE)
+    fname
+  }, error = function(e) {
+    # Return the error message as a tagged string so the caller can detect it.
+    paste0("ERROR:", conditionMessage(e))
+  })
+}
+
+# 10. Batched parallel loop with live progress
+# ------------------------------------------------------------------------------
+# Batch size: enough tasks to keep all cores busy between progress updates.
+# n_cores * 50 = ~1100 tasks per print line at 22 cores.
+BATCH_SIZE <- n_cores * 50L
+n_batches  <- ceiling(n_grid / BATCH_SIZE)
+
+cat(sprintf("[INFO] Processing %d tasks in %d batches (~%d tasks/batch, %d cores)...\n",
+            n_grid, n_batches, BATCH_SIZE, n_cores))
+
+start_ts  <- proc.time()[[3]]
+done      <- 0L
+all_names <- character(n_grid)
+
+for (b in seq_len(n_batches)) {
+  i_start <- (b - 1L) * BATCH_SIZE + 1L
+  i_end   <- min(b * BATCH_SIZE, n_grid)
+
+  batch_rows <- lapply(seq(i_start, i_end), function(i) grid[i, ])
+
+  batch_res <- mclapply(batch_rows, run_task,
+                        mc.cores      = n_cores,
+                        mc.preschedule = TRUE)
+
+  n_errors <- 0L
+  for (j in seq_along(batch_res)) {
+    r <- batch_res[[j]]
+    if (inherits(r, "try-error")) {
+      # mclapply-level failure (fork crash, signal, etc.)
+      n_errors <- n_errors + 1L
+      if (n_errors <= 5L) {
+        cat(sprintf("\n[WARN] Task %d (mclapply): %s",
+                    i_start + j - 1L, as.character(r)))
+      }
+    } else if (is.character(r) && startsWith(r, "ERROR:")) {
+      # Our tryCatch-level failure (R error inside the worker).
+      n_errors <- n_errors + 1L
+      if (n_errors <= 5L) {
+        cat(sprintf("\n[WARN] Task %d: %s",
+                    i_start + j - 1L, sub("^ERROR:", "", r)))
+      }
+    } else if (is.character(r) && length(r) == 1L) {
+      all_names[i_start + j - 1L] <- r
+    } else {
+      n_errors <- n_errors + 1L
+      if (n_errors <= 5L) {
+        cat(sprintf("\n[WARN] Task %d: unexpected result type %s",
+                    i_start + j - 1L, class(r)[1]))
+      }
+    }
+  }
+  if (n_errors > 5L) {
+    cat(sprintf("\n[WARN] ... and %d more errors in this batch.", n_errors - 5L))
+  }
+
+  done    <- i_end
+  elapsed <- as.integer(proc.time()[[3]] - start_ts)
+  pct     <- round(done / n_grid * 100)
+  rate    <- if (elapsed > 0L) round(done / elapsed) else 0L
+  eta     <- if (rate > 0L) as.integer((n_grid - done) / rate) else NA_integer_
+  eta_str <- if (!is.na(eta)) sprintf(" | ETA: %ds", eta) else ""
+
+  cat(sprintf("\r\033[2K[INFO] %d/%d files (%d%%) | %ds elapsed | ~%d files/s%s",
+              done, n_grid, pct, elapsed, rate, eta_str))
+}
+cat("\n")
+
+elapsed_total <- proc.time()[[3]] - start_ts
+n_written     <- sum(nchar(all_names) > 0L)
+cat(sprintf("\n[DONE] %d OD files written in %.0f s.\n", n_written, elapsed_total))
+
+
+
+generate_SD.r:
+# ==============================================================================
+# SCRIPT: 02_generate_synthetic_data.R
+# PURPOSE: Generate Synthetic Data (SD) from each Original Data (OD) file
+#          using MULTIPLE synthesis methods from the `synthpop` package.
+# ==============================================================================
+#
+# Methods: cart (CART), norm (normal linear regression), pmm (predictive
+#          mean matching).  Each OD file produces one SD file per method.
+#
+# Parallelisation: 6 cores (Ryzen 9 9900X).  Each of the 3 methods is split
+#                  into 2 equal file-chunks processed concurrently, so all 6
+#                  workers carry the same workload.
+#
+# WHY CART IS SLOWER:
+#   'cart' builds a full decision tree (via rpart) for every predictor column in
+#   every dataset -- an O(n log n) recursive-partitioning step per variable.
+#   'norm' (Bayesian linear regression) and 'pmm' (predictive mean matching) are
+#   algebraically closed-form and are typically 4-10x faster.  The live display
+#   below makes this difference visible in real time.
+#
+# Inputs:   ../data/original/OD_*_rep*.csv    (from Step 1)
+# Outputs:  ../data/synthetic/SD_{method}_*_rep*.csv
+# ==============================================================================
+
+# 1. Setup & Imports
+# ------------------------------------------------------------------------------
+ensure_package <- function(pkg) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    message(paste("Installing package:", pkg))
+    install.packages(pkg, repos = "http://cran.us.r-project.org",
+                     dependencies = TRUE)
+    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+      stop(paste("Failed to install package:", pkg))
+    }
+  }
+}
+
+ensure_package("jsonlite")
+ensure_package("synthpop")
+ensure_package("parallel")
+
+library(parallel)
+
+# 2. Load Configuration
+# ------------------------------------------------------------------------------
+config_path <- "../config/config.json"
+if (!file.exists(config_path)) {
+  stop("config.json not found! Please ensure it is at ../config/config.json")
+}
+
+config      <- fromJSON(config_path)
+base_seed   <- config$simulation$random_seed_base
+syn_methods <- config$synthesis$methods   # e.g. ["cart", "norm", "pmm"]
+
+cat(sprintf("[INFO] Synthesis methods: %s\n", paste(syn_methods, collapse = ", ")))
+
+# 3. Discover OD files
+# ------------------------------------------------------------------------------
+input_dir  <- file.path("..", "data", "original")
+output_dir <- file.path("..", "data", "synthetic")
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+od_files <- sort(list.files(input_dir, pattern = "^OD_.*\\.csv$",
+                            full.names = TRUE))
+
+if (length(od_files) == 0) {
+  stop("[ERROR] No OD files found in: ", input_dir,
+       "\n        Run 01_generate_original_data.R first.")
+}
+
+total <- length(od_files) * length(syn_methods)
+cat(sprintf("[INFO] Found %d OD file(s) x %d methods = %d SD file(s) to generate.\n",
+            length(od_files), length(syn_methods), total))
+
+# 4. Build parallel task list (Customized for Ryzen 9 9900X - 12 Cores)
+# ------------------------------------------------------------------------------
+# Manual distribution: 2 (norm) + 3 (cart) + 7 (pmm) = 12 total tasks
+NUM_CORES <- 12L 
+
+# Define your custom chunk requirements per method
+method_chunks <- list(
+  "norm" = 2L,
+  "cart" = 3L,
+  "pmm"  = 13L
+)
+
+split_files <- function(files, n_chunks) {
+  if (n_chunks <= 1) return(list(files))
+  idx <- seq_along(files)
+  split(files, cut(idx, breaks = n_chunks, labels = FALSE))
+}
+
+tasks  <- list()
+task_i <- 1L
+
+# SHUFFLE the files here! This distributes "heavy" (N=1000) and "light" (N=100)
+# files evenly across all chunks for ALL methods, perfectly balancing CPU load.
+set.seed(999) # Keep chunk assignment deterministic
+shuffled_od_files <- sample(od_files)
+
+# Loop through the methods defined in your config
+for (m_idx in seq_along(syn_methods)) {
+  method <- syn_methods[m_idx]
+  
+  # Get the chunk count for this method (default to 2 if not in our list)
+  n_chunks <- ifelse(!is.null(method_chunks[[method]]), method_chunks[[method]], 2L)
+  
+  # Use the shuffled list to create chunks
+  chunks <- split_files(shuffled_od_files, n_chunks)
+  
+  for (chunk_idx in seq_len(n_chunks)) {
+    tasks[[task_i]] <- list(
+      method    = method,
+      m_idx     = m_idx,
+      chunk_idx = chunk_idx,
+      files     = chunks[[chunk_idx]]
+    )
+    task_i <- task_i + 1L
+  }
+}
+
+cat(sprintf("[INFO] Custom Dispatch: %d tasks across %d cores.\n", length(tasks), NUM_CORES))
+cat(sprintf("[INFO] Distribution: Norm(2), Cart(3), PMM(13)\n\n"))
+
+# 5. Worker function (runs inside each forked process)
+# ------------------------------------------------------------------------------
+worker <- function(task, progress_file) {
+  suppressPackageStartupMessages({
+    library(jsonlite)
+    library(synthpop)
+  })
+
+  method    <- task$method
+  m_idx     <- task$m_idx
+  chunk_idx <- task$chunk_idx
+  files     <- task$files
+  n_files   <- length(files)
+
+  # Signal to the monitor: initialised, total known.
+  writeLines(sprintf("0 %d", n_files), progress_file)
+
+  config_path <- "../config/config.json"
+  config      <- fromJSON(config_path)
+  base_seed   <- config$simulation$random_seed_base
+  syn_methods <- config$synthesis$methods
+  output_dir  <- file.path("..", "data", "synthetic")
+
+  full_od_files <- sort(list.files(
+    file.path("..", "data", "original"),
+    pattern    = "^OD_.*\\.csv$",
+    full.names = TRUE
+  ))
+
+  results <- list()
+  done    <- 0L
+
+  for (od_path in files) {
+    od_name      <- basename(od_path)
+    od           <- read.csv(od_path)
+    global_idx   <- match(od_path, full_od_files)
+
+    syn_seed     <- base_seed + (global_idx * 1000L) + match(method, syn_methods) * 100L
+    scenario_tag <- sub("^OD_", "", od_name)
+
+    tryCatch({
+      # suppressMessages + suppressWarnings silence synthpop's per-variable
+      # "Method changed to logreg/polyreg" and "numeric turned to factor"
+      # messages that flood the terminal when processing binary OD files.
+      # The synthesis itself is unaffected; synthpop still picks the correct
+      # method (logreg for 0/1 columns) automatically.
+      # capture.output() catches any residual cat() calls from synthpop that
+      # would otherwise corrupt the ANSI progress bar display.
+      # minnumlevels = 1 suppresses the warning about binary 0/1 columns
+      # being numeric with 5 or fewer unique levels.
+      invisible(capture.output({
+        syn_obj <- suppressMessages(suppressWarnings(
+          syn(od, method = method, seed = syn_seed,
+              print.flag = FALSE, proper = TRUE, minnumlevels = 1)
+        ))
+      }))
+      sd <- syn_obj$syn
+
+      # When method == "norm", synthpop treats binary predictors as continuous
+      # and generates decimal values.  Threshold X1..Xp back to strict 0/1
+      # while leaving the continuous y column untouched.
+      if (method == "norm") {
+        x_cols <- grep("^X[0-9]+$", names(sd), value = TRUE)
+        for (col in x_cols) {
+          sd[[col]] <- ifelse(sd[[col]] >= 0.5, 1, 0)
+        }
+      }
+
+      sd_name <- paste0("SD_", method, "_", scenario_tag)
+      write.csv(sd, file.path(output_dir, sd_name), row.names = FALSE)
+
+      done <- done + 1L
+      results[[length(results) + 1L]] <- list(
+        status = "ok",
+        file   = sd_name,
+        method = method,
+        chunk  = chunk_idx
+      )
+    }, error = function(e) {
+      results[[length(results) + 1L]] <<- list(
+        status  = "warn",
+        file    = od_name,
+        method  = method,
+        chunk   = chunk_idx,
+        message = e$message
+      )
+    })
+
+    # Update progress file after every dataset (polled by the monitor loop).
+    writeLines(sprintf("%d %d", done, n_files), progress_file)
+  }
+
+  results
+}
+
+# 6. Create per-task progress files and launch workers (non-blocking)
+# ------------------------------------------------------------------------------
+progress_files <- vapply(
+  seq_along(tasks),
+  function(i) file.path(tempdir(), sprintf("sd_progress_%02d.txt", i)),
+  character(1)
+)
+for (pf in progress_files) writeLines("0 0", pf)
+
+# mcparallel forks immediately and returns a handle -- does NOT block.
+jobs <- lapply(seq_along(tasks), function(i) {
+  mcparallel(worker(tasks[[i]], progress_files[i]))
+})
+
+# 7. Live per-core progress display (polls every 0.5 s)
+# ------------------------------------------------------------------------------
+BAR_WIDTH <- 24L
+
+make_bar <- function(done, total) {
+  if (total == 0L) return(strrep("-", BAR_WIDTH))
+  filled <- as.integer(round(done / total * BAR_WIDTH))
+  paste0(strrep("=", filled), strrep("-", BAR_WIDTH - filled))
+}
+
+read_progress <- function(pf) {
+  tryCatch({
+    parts <- as.integer(
+      strsplit(trimws(readLines(pf, n = 1L, warn = FALSE)), " ")[[1]]
+    )
+    if (length(parts) == 2L) parts else c(0L, 0L)
+  }, error = function(e) c(0L, 0L))
+}
+
+n_tasks  <- length(tasks)
+start_ts <- proc.time()[[3]]
+
+# Print header then one placeholder line per core (overwritten in-place).
+cat(sprintf("%-8s  %-6s  %-7s  %-*s  %4s  %-10s\n",
+            "Core", "Method", "Chunk", BAR_WIDTH, "Progress", "Done", "Files"))
+cat(strrep("-", 65L), "\n")
+for (i in seq_len(n_tasks)) {
+  cat(sprintf("Core %-3d  %-6s  chunk-%1d  [%s]   0%%  (0/??)\n",
+              i, tasks[[i]]$method, tasks[[i]]$chunk_idx,
+              strrep("-", BAR_WIDTH)))
+}
+
+repeat {
+  Sys.sleep(0.5)
+
+  elapsed  <- proc.time()[[3]] - start_ts
+  n_finish <- 0L
+
+  # Jump cursor up over the n_tasks status lines to overwrite them.
+  cat(sprintf("\033[%dA", n_tasks))
+
+  for (i in seq_len(n_tasks)) {
+    p     <- read_progress(progress_files[i])
+    done  <- p[1L]; tot <- p[2L]
+    pct   <- if (tot > 0L) as.integer(round(done / tot * 100L)) else 0L
+    bar   <- make_bar(done, tot)
+    tot_s <- if (tot > 0L) as.character(tot) else "??"
+    fin   <- tot > 0L && done >= tot
+    if (fin) n_finish <- n_finish + 1L
+    tag   <- if (fin) " DONE " else sprintf(" %3ds ", as.integer(elapsed))
+    # \033[2K clears the current terminal line before writing the new content.
+    cat(sprintf("\033[2KCore %-3d  %-6s  chunk-%1d  [%s]  %3d%%  (%d/%s)%s\n",
+                i, tasks[[i]]$method, tasks[[i]]$chunk_idx,
+                bar, pct, done, tot_s, tag))
+  }
+
+  if (n_finish == n_tasks) break
+}
+
+# 8. Collect results (blocking -- all workers are finished by now)
+# ------------------------------------------------------------------------------
+all_results <- mccollect(jobs, wait = TRUE)
+
+count  <- 0L
+errors <- 0L
+warns  <- character(0)
+
+for (task_results in all_results) {
+  if (inherits(task_results, "try-error")) {
+    cat(sprintf("[ERROR] A worker process failed: %s\n", as.character(task_results)))
+    next
+  }
+  for (r in task_results) {
+    if (r$status == "ok") {
+      count <- count + 1L
+    } else {
+      errors <- errors + 1L
+      warns  <- c(warns, sprintf("  [WARN] %s / %s: %s", r$method, r$file, r$message))
+    }
+  }
+}
+
+if (length(warns) > 0L) cat("\n", paste(warns, collapse = "\n"), "\n", sep = "")
+
+elapsed_total <- proc.time()[[3]] - start_ts
+cat(sprintf("\n[DONE] %d file(s) written, %d warning(s).  Wall time: %.0fs\n",
+            count, errors, elapsed_total))
+
