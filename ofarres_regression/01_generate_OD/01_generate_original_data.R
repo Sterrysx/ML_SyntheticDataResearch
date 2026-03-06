@@ -60,6 +60,18 @@ cat(sprintf("  M:         %d\n", M))
 cat(sprintf("  beta:      [%s]  (will be subset to p+1)\n\n",
             paste(beta_full, collapse = ", ")))
 
+
+args <- commandArgs(trailingOnly = TRUE)
+run_mode <- if (length(args) > 0) args[1] else "all"
+
+if (run_mode == "continuous") {
+  var_types <- "continuous"
+  cat("[INFO] Bash override: Running ONLY continuous variables.\n")
+} else if (run_mode == "binary") {
+  var_types <- "binary"
+  cat("[INFO] Bash override: Running ONLY binary variables.\n")
+}
+
 # 3. Build full parameter grid
 # ------------------------------------------------------------------------------
 grid_parts <- list()
@@ -91,6 +103,12 @@ if ("binary" %in% var_types) {
 }
 
 grid <- do.call(rbind, grid_parts)
+
+# SHUFFLE THE GRID: This mixes binary and continuous tasks to prevent 
+# core clustering and out-of-memory errors.
+set.seed(base_seed)
+grid <- grid[sample(nrow(grid)), ]
+
 rownames(grid) <- NULL
 n_grid <- nrow(grid)
 
@@ -101,8 +119,6 @@ cat(sprintf("[INFO] Parameter grid: %d rows  (%d scenarios x %d iterations).\n",
 # ------------------------------------------------------------------------------
 output_dir <- file.path("..", "data", "original")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-
-pad_width <- nchar(as.character(M))
 
 # 5. Parallel setup
 # ------------------------------------------------------------------------------
@@ -192,8 +208,14 @@ run_task <- function(row) {
       key     <- paste(p_cur, rho_cur, p1_cur, sep = "_")
       bin_obj <- bin_cache[[key]]
       X_raw   <- genB(no.rows = N_cur, binObj = bin_obj)
-      X       <- matrix(as.numeric(as.character(unlist(X_raw))),
-                        nrow = N_cur, ncol = p_cur)
+      
+      # 🚀 FIX 1: Bypass string allocation entirely.
+      if (is.list(X_raw) || is.data.frame(X_raw)) {
+        X <- matrix(as.integer(unlist(X_raw, use.names = FALSE)) - 1L, 
+                    nrow = N_cur, ncol = p_cur)
+      } else {
+        X <- matrix(as.numeric(X_raw), nrow = N_cur, ncol = p_cur)
+      }
     }
 
     X_design <- cbind(1, X)
@@ -204,14 +226,11 @@ run_task <- function(row) {
     colnames(df) <- paste0("X", seq_len(p_cur))
     df$y         <- y
 
+    df$iter  <- as.integer(row$m)
     p1_str   <- if (is.na(p1_cur)) "NA" else sprintf("%.2f", p1_cur)
-    m_padded <- formatC(as.integer(row$m), width = pad_width, flag = "0")
-
-    # Output Parquet instead of CSV
-    fname <- sprintf("OD_%s_N%d_p%d_rho%.1f_sig%.1f_p1%s_iter%s.parquet",
-                     vtype, N_cur, p_cur, rho_cur, sig2_cur, p1_str, m_padded)
-    write_parquet(df, file.path(output_dir, fname))
-    fname
+    scenario_key <- sprintf("OD_%s_N%d_p%d_rho%.1f_sig%.1f_p1%s",
+                           vtype, N_cur, p_cur, rho_cur, sig2_cur, p1_str)
+    list(key = scenario_key, data = df)
   }, error = function(e) {
     paste0("ERROR:", conditionMessage(e))
   })
@@ -225,9 +244,9 @@ n_batches  <- ceiling(n_grid / BATCH_SIZE)
 cat(sprintf("[INFO] Processing %d tasks in %d batches (~%d tasks/batch, %d cores)...\n",
             n_grid, n_batches, BATCH_SIZE, n_cores))
 
-start_ts  <- proc.time()[[3]]
-done      <- 0L
-all_names <- character(n_grid)
+start_ts     <- proc.time()[[3]]
+done         <- 0L
+all_results  <- vector("list", n_grid)
 
 for (b in seq_len(n_batches)) {
   i_start <- (b - 1L) * BATCH_SIZE + 1L
@@ -248,8 +267,8 @@ for (b in seq_len(n_batches)) {
     } else if (is.character(r) && startsWith(r, "ERROR:")) {
       n_errors <- n_errors + 1L
       if (n_errors <= 5L) cat(sprintf("\n[WARN] Task %d: %s", i_start + j - 1L, sub("^ERROR:", "", r)))
-    } else if (is.character(r) && length(r) == 1L) {
-      all_names[i_start + j - 1L] <- r
+    } else if (is.list(r) && !is.null(r$key)) {
+      all_results[[i_start + j - 1L]] <- r
     } else {
       n_errors <- n_errors + 1L
       if (n_errors <= 5L) cat(sprintf("\n[WARN] Task %d: unexpected result type %s", i_start + j - 1L, class(r)[1]))
@@ -269,8 +288,37 @@ for (b in seq_len(n_batches)) {
   cat(sprintf("\r\033[2K[INFO] %d/%d files (%d%%) | %ds elapsed | ~%d files/s%s",
               done, n_grid, pct, elapsed, rate, eta_str))
 }
-cat("\n")
+cat("\n\n[INFO] Consolidating iterations into per-scenario Parquet files...\n")
+
+# Group results by scenario key
+scenario_groups <- list()
+for (res in all_results) {
+  if (!is.null(res) && is.list(res) && !is.null(res$key)) {
+    key <- res$key
+    if (is.null(scenario_groups[[key]])) {
+      scenario_groups[[key]] <- list()
+    }
+    scenario_groups[[key]][[length(scenario_groups[[key]]) + 1L]] <- res$data
+  }
+}
+
+n_written <- 0L
+for (key in names(scenario_groups)) {
+  combined <- do.call(rbind, scenario_groups[[key]])
+  
+  # 🚀 FIX 2: Explicit Row Groups for Python performance
+  N_cur_val <- nrow(scenario_groups[[key]][[1]]) 
+  
+  write_parquet(
+      combined, 
+      file.path(output_dir, paste0(key, ".parquet")),
+      compression = "zstd", 
+      chunk_size = N_cur_val
+  )
+  n_written <- n_written + 1L
+}
 
 elapsed_total <- proc.time()[[3]] - start_ts
-n_written     <- sum(nchar(all_names) > 0L)
-cat(sprintf("\n[DONE] %d OD files written in %.0f s.\n", n_written, elapsed_total))
+n_tasks_ok    <- sum(!sapply(all_results, is.null))
+cat(sprintf("\n[DONE] %d scenario files (%d iterations) written in %.0f s.\n",
+            n_written, n_tasks_ok, elapsed_total))

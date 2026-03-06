@@ -62,8 +62,8 @@ od_packed_path = os.path.join("..", "data", "OD_packed.parquet")
 sd_packed_path = os.path.join("..", "data", "SD_packed.parquet")
 os.makedirs(result_dir, exist_ok=True)
 
-_OD_RE = re.compile(r"OD_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+_iter(\d+)")
-_SD_RE = re.compile(r"SD_(\w+?)_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+_iter(\d+)")
+_OD_RE = re.compile(r"OD_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
+_SD_RE = re.compile(r"SD_(\w+?)_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
 
 # ── File Parsers (Fixed NaN dictionary bug by mapping NA to -1.0) ─────────────
 def _read_one_od(fp):
@@ -73,13 +73,16 @@ def _read_one_od(fp):
     # Map NA to -1.0 so dictionary keys don't break on NaN comparisons
     sig = float(m.group(5)) if m.group(5) != "NA" else -1.0
     
-    df = pd.read_parquet(fp).astype("float32")
+    raw = pd.read_parquet(fp)
+    iter_col = raw["iter"].astype(np.int16)
+    df = raw.drop(columns=["iter"]).astype("float32")
     for c in SCHEMA_COLS:
         if c not in df.columns: df[c] = float("nan")
             
     df = df[SCHEMA_COLS].copy()
     df["var_type"], df["N"], df["p"] = m.group(1), np.int16(m.group(2)), np.int8(m.group(3))
-    df["rho"], df["sigma_2"], df["iter"] = np.float32(m.group(4)), np.float32(sig), np.int16(m.group(6))
+    df["rho"], df["sigma_2"] = np.float32(m.group(4)), np.float32(sig)
+    df["iter"] = iter_col
     return df
 
 def _read_one_sd(fp):
@@ -88,14 +91,17 @@ def _read_one_sd(fp):
     
     sig = float(m.group(6)) if m.group(6) != "NA" else -1.0
     
-    df = pd.read_parquet(fp).astype("float32")
+    raw = pd.read_parquet(fp)
+    iter_col = raw["iter"].astype(np.int16)
+    df = raw.drop(columns=["iter"]).astype("float32")
     for c in SCHEMA_COLS:
         if c not in df.columns: df[c] = float("nan")
             
     df = df[SCHEMA_COLS].copy()
     df["method"], df["var_type"] = m.group(1), m.group(2)
     df["N"], df["p"] = np.int16(m.group(3)), np.int8(m.group(4))
-    df["rho"], df["sigma_2"], df["iter"] = np.float32(m.group(5)), np.float32(sig), np.int16(m.group(7))
+    df["rho"], df["sigma_2"] = np.float32(m.group(5)), np.float32(sig)
+    df["iter"] = iter_col
     return df
 
 def _pack(file_glob, reader_fn, out_path, label, n_jobs=-1):

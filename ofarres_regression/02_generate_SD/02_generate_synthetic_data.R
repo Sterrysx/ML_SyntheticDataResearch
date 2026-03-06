@@ -2,7 +2,7 @@
 # SCRIPT: 02_generate_synthetic_data.R
 # PURPOSE: Generate Synthetic Data (SD) from each Original Data (OD) file
 #          using MULTIPLE synthesis methods from the `synthpop` package.
-#          ** FORK-FREE ARCHITECTURE: COMPLETELY IMMUNE TO DEADLOCKS **
+#          ** FULL DYNAMIC QUEUE (WORK STEALING) APPLIED **
 # ==============================================================================
 
 # 1. Setup & Imports
@@ -55,54 +55,40 @@ total <- length(od_files) * length(syn_methods)
 cat(sprintf("[INFO] Found %d OD file(s) x %d methods = %d SD file(s) to generate.\n",
             length(od_files), length(syn_methods), total))
 
-# 4. Build task list
+# 4. Build Atomic Task Queue Directory structure
 # ------------------------------------------------------------------------------
 NUM_CORES <- 18L 
 
-method_chunks <- list(
-  "norm" = 2L,
-  "cart" = 3L,
-  "pmm"  = 13L
-)
+todo_dir  <- file.path(tempdir(), "tasks_todo")
+doing_dir <- file.path(tempdir(), "tasks_doing")
+unlink(todo_dir, recursive = TRUE); unlink(doing_dir, recursive = TRUE)
+dir.create(todo_dir, showWarnings = FALSE)
+dir.create(doing_dir, showWarnings = FALSE)
 
-split_files <- function(files, n_chunks) {
-  if (n_chunks <= 1) return(list(files))
-  idx <- seq_along(files)
-  split(files, cut(idx, breaks = n_chunks, labels = FALSE))
-}
-
-tasks  <- list()
 task_i <- 1L
-
 set.seed(999) 
-shuffled_od_files <- sample(od_files)
+shuffled_od_files <- sample(od_files) # Keep shuffle so binary/continuous mix!
 
-for (m_idx in seq_along(syn_methods)) {
-  method <- syn_methods[m_idx]
-  n_chunks <- ifelse(!is.null(method_chunks[[method]]), method_chunks[[method]], 2L)
-  chunks <- split_files(shuffled_od_files, n_chunks)
-  
-  for (chunk_idx in seq_len(n_chunks)) {
-    tasks[[task_i]] <- list(
-      method    = method,
-      m_idx     = m_idx,
-      chunk_idx = chunk_idx,
-      files     = chunks[[chunk_idx]]
-    )
+for (method in syn_methods) {
+  for (od_path in shuffled_od_files) {
+    task_data <- list(method = method, file = od_path)
+    saveRDS(task_data, file.path(todo_dir, sprintf("task_%05d.rds", task_i)))
     task_i <- task_i + 1L
   }
 }
 
-cat(sprintf("[INFO] Custom Dispatch: %d tasks across %d cores.\n", length(tasks), NUM_CORES))
-cat(sprintf("[INFO] Distribution: Norm(2), Cart(3), PMM(13)\n\n"))
+total_tasks <- task_i - 1L
+cat(sprintf("[INFO] Dynamic Queue built. %d tasks ready for %d cores.\n\n", total_tasks, NUM_CORES))
 
 # 5. Generate Independent Worker Script
 # ------------------------------------------------------------------------------
 worker_script <- file.path(tempdir(), "sd_worker.R")
 worker_code <- c(
   "args <- commandArgs(trailingOnly = TRUE)",
-  "task_file <- args[1]",
-  "task <- readRDS(task_file)",
+  "progress_file <- args[1]",
+  "result_file <- args[2]",
+  "todo_dir <- args[3]",
+  "doing_dir <- args[4]",
   "",
   "Sys.setenv(OMP_NUM_THREADS = '1')",
   "Sys.setenv(OPENBLAS_NUM_THREADS = '1')",
@@ -115,14 +101,6 @@ worker_code <- c(
   "}))",
   "arrow::set_cpu_count(1)",
   "",
-  "method <- task$method",
-  "files <- task$files",
-  "progress_file <- task$progress_file",
-  "result_file <- task$result_file",
-  "n_files <- length(files)",
-  "",
-  "writeLines(sprintf('0 %d', n_files), progress_file)",
-  "",
   "config <- fromJSON('../config/config.json')",
   "base_seed <- config$simulation$random_seed_base",
   "syn_methods <- config$synthesis$methods",
@@ -130,82 +108,107 @@ worker_code <- c(
   "",
   "full_od_files <- sort(list.files(file.path('..', 'data', 'original'), pattern = '^OD_.*[.]parquet$', full.names = TRUE))",
   "results <- list()",
-  "done <- 0L",
+  "writeLines('READY', progress_file)",
   "",
-  "for (od_path in files) {",
-  "  od_name <- basename(od_path)",
-  "  tryCatch({",
-  "    od <- as.data.frame(read_parquet(od_path))",
-  "    global_idx <- match(od_path, full_od_files)",
-  "    syn_seed <- base_seed + (global_idx * 1000L) + match(method, syn_methods) * 100L",
-  "    scenario_tag <- sub('^OD_', '', od_name)",
+  "# WORK STEALING LOOP: Atomically claim files from todo_dir",
+  "repeat {",
+  "  available_tasks <- list.files(todo_dir, full.names = TRUE)",
+  "  if (length(available_tasks) == 0L) break # No more work!",
   "",
-  "    is_binary <- grepl('_binary_', od_name)",
-  "    x_cols <- grep('^X[0-9]+$', names(od), value = TRUE)",
+  "  target_task <- available_tasks[1]",
+  "  claimed_task <- file.path(doing_dir, basename(target_task))",
   "",
-  "    # Only CART requires binary variables to be factors. NORM/PMM crash on factors.",
-  "    if (is_binary && method == 'cart') {",
-  "      for (col in x_cols) od[[col]] <- as.factor(od[[col]])",
-  "    }",
+  "  # file.rename is an OS-level ATOMIC operation.",
+  "  # If it returns TRUE, this core successfully claimed the file.",
+  "  if (file.rename(target_task, claimed_task)) {",
+  "    task <- readRDS(claimed_task)",
+  "    od_path <- task$file",
+  "    method <- task$method",
+  "    od_name <- basename(od_path)",
   "",
-  "    invisible(capture.output({",
-  "      syn_obj <- suppressMessages(suppressWarnings(",
-  "        syn(od, method = method, seed = syn_seed, print.flag = FALSE, proper = TRUE)",
-  "      ))",
-  "    }))",
-  "    sd <- syn_obj$syn",
-  "",
-  "    if (is_binary) {",
-  "      for (col in x_cols) {",
-  "        if (method == 'cart') {",
-  "          sd[[col]] <- as.numeric(as.character(sd[[col]]))",
-  "        } else {",
-  "          # NORM/PMM output continuous predictions for binary inputs, snap them back to 0/1",
-  "          sd[[col]] <- as.numeric(sd[[col]] >= 0.5)",
-  "        }",
-  "      }",
-  "    }",
-  "",
+  "    # Extract clean tag (remove 'OD_' and '.parquet')",
+  "    scenario_tag <- sub('^OD_', '', sub('\\\\.parquet$', '', od_name))",
   "    sd_name <- paste0('SD_', method, '_', scenario_tag)",
-  "    write_parquet(sd, file.path(output_dir, sd_name))",
   "",
-  "    done <- done + 1L",
-  "    results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, method = method)",
-  "    writeLines(sprintf('%d %d', done, n_files), progress_file)",
-  "  }, error = function(e) {",
-  "    done <<- done + 1L",
-  "    writeLines(sprintf('%d %d', done, n_files), progress_file)",
-  "    results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = od_name, method = method)",
-  "  })",
+  "    writeLines(paste(toupper(method), '|', scenario_tag), progress_file)",
+  "",
+  "    tryCatch({",
+  "      od_full <- as.data.frame(read_parquet(od_path))",
+  "      global_idx <- match(od_path, full_od_files)",
+  "",
+  "      is_binary <- grepl('_binary_', od_name)",
+  "      x_cols <- grep('^X[0-9]+$', names(od_full)[names(od_full) != 'iter'], value = TRUE)",
+  "",
+  "      iters <- sort(unique(od_full$iter))",
+  "      sd_list <- list()",
+  "",
+  "      for (it in iters) {",
+  "        od <- od_full[od_full$iter == it, ]",
+  "        od$iter <- NULL",
+  "",
+  "        syn_seed <- base_seed + (global_idx * 1000L) + match(method, syn_methods) * 100L + it",
+  "",
+  "        if (is_binary && method == 'cart') {",
+  "          for (col in x_cols) od[[col]] <- as.factor(od[[col]])",
+  "        }",
+  "",
+  "        invisible(capture.output({",
+  "          syn_obj <- suppressMessages(suppressWarnings(",
+  "            syn(od, method = method, seed = syn_seed, print.flag = FALSE, proper = TRUE)",
+  "          ))",
+  "        }))",
+  "        sd <- syn_obj$syn",
+  "",
+  "        if (is_binary) {",
+  "          for (col in x_cols) {",
+  "            if (method == 'cart') {",
+  "              sd[[col]] <- as.numeric(as.character(sd[[col]]))",
+  "            } else {",
+  "              sd[[col]] <- as.numeric(sd[[col]] >= 0.5)",
+  "            }",
+  "          }",
+  "        }",
+  "",
+  "        sd$iter <- it",
+  "        sd_list[[length(sd_list) + 1L]] <- sd",
+  "      }",
+  "",
+  "      combined_sd <- do.call(rbind, sd_list)",
+  "      write_parquet(combined_sd, file.path(output_dir, paste0(sd_name, '.parquet')))",
+  "",
+  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, method = method)",
+  "    }, error = function(e) {",
+  "      results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = od_name, method = method)",
+  "    })",
+  "",
+  "    # Delete the task file now that we are done with it",
+  "    file.remove(claimed_task)",
+  "  }",
   "}",
   "",
+  "writeLines('DONE', progress_file)",
   "saveRDS(results, result_file)"
 )
 writeLines(worker_code, worker_script)
 
 # 6. Launch completely independent background jobs
 # ------------------------------------------------------------------------------
-progress_files <- character(length(tasks))
+progress_files <- character(NUM_CORES)
+result_files   <- character(NUM_CORES)
 
-for (i in seq_along(tasks)) {
-  tasks[[i]]$progress_file <- file.path(tempdir(), sprintf("sd_progress_%02d.txt", i))
-  tasks[[i]]$result_file   <- file.path(tempdir(), sprintf("sd_result_%02d.rds", i))
-  progress_files[i]        <- tasks[[i]]$progress_file
+for (i in seq_len(NUM_CORES)) {
+  progress_files[i] <- file.path(tempdir(), sprintf("sd_progress_%02d.txt", i))
+  result_files[i]   <- file.path(tempdir(), sprintf("sd_result_%02d.rds", i))
   
-  # Ensure clean slate
-  writeLines("0 0", progress_files[i])
-  if (file.exists(tasks[[i]]$result_file)) file.remove(tasks[[i]]$result_file)
+  writeLines("STARTING", progress_files[i])
+  if (file.exists(result_files[i])) file.remove(result_files[i])
   
-  # Package up the task and launch the background process
-  task_file <- file.path(tempdir(), sprintf("task_%02d.rds", i))
-  saveRDS(tasks[[i]], task_file)
-  
-  system2("Rscript", args = c(worker_script, task_file), wait = FALSE)
+  system2("Rscript", args = c(worker_script, progress_files[i], result_files[i], todo_dir, doing_dir), wait = FALSE)
 }
 
-# 7. Live per-core progress display
+# 7. Live Unified Progress Display
 # ------------------------------------------------------------------------------
-BAR_WIDTH <- 24L
+BAR_WIDTH <- 40L
 
 make_bar <- function(done, total) {
   if (total == 0L) return(strrep("-", BAR_WIDTH))
@@ -213,56 +216,58 @@ make_bar <- function(done, total) {
   paste0(strrep("=", filled), strrep("-", BAR_WIDTH - filled))
 }
 
-read_progress <- function(pf) {
-  tryCatch({
-    parts <- as.integer(strsplit(trimws(readLines(pf, n = 1L, warn = FALSE)), " ")[[1]])
-    if (length(parts) == 2L) parts else c(0L, 0L)
-  }, error = function(e) c(0L, 0L))
-}
-
-n_tasks  <- length(tasks)
 start_ts <- proc.time()[[3]]
 
-cat(sprintf("%-8s  %-6s  %-7s  %-*s  %4s  %-10s\n",
-            "Core", "Method", "Chunk", BAR_WIDTH, "Progress", "Done", "Files"))
-cat(strrep("-", 65L), "\n")
-for (i in seq_len(n_tasks)) {
-  cat(sprintf("Core %-3d  %-6s  chunk-%1d  [%s]   0%%  (0/??)\n",
-              i, tasks[[i]]$method, tasks[[i]]$chunk_idx, strrep("-", BAR_WIDTH)))
+# Initial UI Draw
+cat(sprintf("Global Progress: [ Waiting... ]\n"))
+cat(strrep("-", 80), "\n")
+for (i in seq_len(NUM_CORES)) {
+  cat(sprintf("   Core %-3d : STARTING\033[K\n", i))
 }
 
 repeat {
   Sys.sleep(0.5)
-
-  elapsed  <- proc.time()[[3]] - start_ts
+  
+  # Move cursor up by (NUM_CORES + 2) lines to redraw
+  cat(sprintf("\033[%dA", NUM_CORES + 2L))
+  
+  todo_count  <- length(list.files(todo_dir))
+  doing_count <- length(list.files(doing_dir))
+  done_count  <- total_tasks - todo_count - doing_count
+  
+  pct     <- if (total_tasks > 0) as.integer(round(done_count / total_tasks * 100)) else 0
+  bar     <- make_bar(done_count, total_tasks)
+  elapsed <- as.integer(proc.time()[[3]] - start_ts)
+  
+  # Print Unified Master Bar
+  cat(sprintf("\r\033[2K[INFO] [%s] %3d%% (%d/%d) | %ds elapsed\n", 
+              bar, pct, done_count, total_tasks, elapsed))
+  cat(strrep("-", 80), "\n")
+  
   n_finish <- 0L
-
-  cat(sprintf("\033[%dA", n_tasks))
-
-  for (i in seq_len(n_tasks)) {
-    p <- read_progress(progress_files[i])
-    done <- p[1L]; tot <- p[2L]
+  
+  # Print Individual Core Activity
+  for (i in seq_len(NUM_CORES)) {
+    status <- "WAITING"
     
-    # The existence of the result file is the absolute truth that the process exited
-    fin <- file.exists(tasks[[i]]$result_file)
-    
-    if (fin) {
-      n_finish <- n_finish + 1L
-      if (tot == 0L) tot <- 1L 
-      done <- tot              
+    if (file.exists(progress_files[i])) {
+      lines <- readLines(progress_files[i], warn = FALSE)
+      if (length(lines) > 0) status <- lines[1]
     }
     
-    pct   <- if (tot > 0L) as.integer(round(done / tot * 100L)) else 0L
-    bar   <- make_bar(done, tot)
-    tot_s <- if (tot > 0L) as.character(tot) else "??"
-    tag   <- if (fin) " DONE " else sprintf(" %3ds ", as.integer(elapsed))
+    # If the result file exists, the background process definitely exited
+    if (file.exists(result_files[i])) {
+      status <- "DONE"
+      n_finish <- n_finish + 1L
+    }
     
-    cat(sprintf("\033[2KCore %-3d  %-6s  chunk-%1d  [%s]  %3d%%  (%d/%s)%s\n",
-                i, tasks[[i]]$method, tasks[[i]]$chunk_idx,
-                bar, pct, done, tot_s, tag))
+    # Truncate very long scenario names so the terminal doesn't line-wrap and break the UI
+    if (nchar(status) > 65) status <- paste0(substr(status, 1, 62), "...")
+    
+    cat(sprintf("\r\033[2K   Core %-3d : %s\n", i, status))
   }
-
-  if (n_finish == n_tasks) break
+  
+  if (n_finish == NUM_CORES) break
 }
 
 # 8. Collect results 
@@ -271,12 +276,12 @@ count  <- 0L
 errors <- 0L
 warns  <- character(0)
 
-for (i in seq_along(tasks)) {
-  res_file <- tasks[[i]]$result_file
+for (i in seq_len(NUM_CORES)) {
+  res_file <- result_files[i]
   
   if (!file.exists(res_file)) {
     errors <- errors + 1L
-    warns <- c(warns, sprintf("  [FATAL] Core %d (%s) crashed entirely without saving output.", i, tasks[[i]]$method))
+    warns <- c(warns, sprintf("  [FATAL] Core %d crashed entirely without saving output.", i))
     next
   }
   

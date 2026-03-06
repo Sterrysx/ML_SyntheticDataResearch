@@ -9,6 +9,15 @@
 
 set -e  # Exit on any error
 
+# ==============================================================================
+# NEW: ZOMBIE PROCESS CLEANUP TRAP
+# Automatically hunts down and kills orphaned SD workers if you hit Ctrl+C
+# ==============================================================================
+cleanup() {
+    pkill -f "sd_worker.R" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 # Check if conda is available
 if ! command -v conda &> /dev/null; then
     echo "❌ ERROR: conda is not installed or not in PATH"
@@ -89,10 +98,23 @@ echo ""
 
 cd 01_generate_OD
 START_TIME=$(date +%s)
-Rscript 01_generate_original_data.R
+
+# --- 1A: Continuous Variables ---
+log_info "-> Phase 1A: Generating Continuous Data..."
+Rscript 01_generate_original_data.R continuous
 
 if [ $? -ne 0 ]; then
-    log_error "OD generation failed!"
+    log_error "Phase 1A (Continuous) OD generation failed!"
+    exit 1
+fi
+
+# --- 1B: Binary Variables ---
+echo ""
+log_info "-> Phase 1B: Generating Binary Data (This will take longer)..."
+Rscript 01_generate_original_data.R binary
+
+if [ $? -ne 0 ]; then
+    log_error "Phase 1B (Binary) OD generation failed!"
     exit 1
 fi
 
