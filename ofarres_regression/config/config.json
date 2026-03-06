@@ -4,8 +4,6 @@
     "p": [3, 10],
     "var_type": ["continuous", "binary"],
     "random_seed_base": 16,
-    "test_seed": 123,
-    "N_test": 10000,
     "M": 10
   },
   "parameters": {

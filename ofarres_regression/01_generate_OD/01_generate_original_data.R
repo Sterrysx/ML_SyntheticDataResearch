@@ -83,7 +83,7 @@ if ("binary" %in% var_types) {
     N        = N_vals,
     p        = p_vals,
     rho      = rho_vals,
-    sigma_2  = NA_real_,  
+    sigma_2  = sigma_2_vals,  
     p1       = p1_vals,
     m        = seq_len(M),
     stringsAsFactors = FALSE

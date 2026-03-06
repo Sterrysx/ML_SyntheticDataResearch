@@ -50,9 +50,9 @@ log_info "Starting full regression pipeline..."
 echo ""
 
 # ==============================================================================
-# STEP 0: Validate Environment
+# STEP 0: Validate Environment & NUKE OLD CACHES
 # ==============================================================================
-log_info "STEP 0: Validating environment..."
+log_info "STEP 0: Validating environment and cleaning previous runs..."
 
 if [ ! -f "config/config.json" ]; then
     log_error "config/config.json not found!"
@@ -60,12 +60,14 @@ if [ ! -f "config/config.json" ]; then
 fi
 log_success "config/config.json found"
 
-# Check R
-if ! command -v Rscript &> /dev/null; then
-    log_error "R is not installed or not in PATH"
-    exit 1
-fi
-log_success "R installation verified"
+# Aggressive cache nuking
+log_warning "Nuking all previously generated data and results..."
+rm -f data/original/*.parquet 2>/dev/null || true
+rm -f data/synthetic/*.parquet 2>/dev/null || true
+rm -f data/*_packed.parquet 2>/dev/null || true
+rm -f results/*.parquet 2>/dev/null || true
+rm -f results/*.csv 2>/dev/null || true
+log_success "Environment cleaned successfully."
 
 # Check Python
 if command -v python3 &> /dev/null; then
@@ -76,25 +78,6 @@ else
     log_error "Python is not installed or not in PATH"
     exit 1
 fi
-log_success "Python installation verified ($PYTHON_CMD)"
-
-# Check Python packages
-log_info "Checking Python dependencies..."
-$PYTHON_CMD -c "import pandas, numpy, sklearn, matplotlib, seaborn, scipy" 2>/dev/null
-if [ $? -ne 0 ]; then
-    log_warning "Some Python packages are missing. Installing from requirements.txt..."
-    pip install -r requirements.txt
-fi
-log_success "Python dependencies satisfied"
-
-# Check R packages
-log_info "Checking R dependencies..."
-Rscript -e "pkgs <- c('jsonlite', 'mvtnorm', 'synthpop'); if (!all(pkgs %in% installed.packages()[,'Package'])) { quit(status=1) }" 2>/dev/null
-if [ $? -ne 0 ]; then
-    log_warning "Some R packages are missing. Installing..."
-    Rscript -e "install.packages(c('jsonlite', 'mvtnorm', 'synthpop'), repos='http://cran.us.r-project.org')"
-fi
-log_success "R dependencies satisfied"
 
 echo ""
 
@@ -105,13 +88,6 @@ log_info "STEP 1: Generating Original Data (OD) ..."
 echo ""
 
 cd 01_generate_OD
-
-# Clear old data (Fixed for Parquet)
-if [ -d "../data/original" ]; then
-    log_warning "Removing old original data..."
-    rm -f ../data/original/*.parquet 2>/dev/null || true
-fi
-
 START_TIME=$(date +%s)
 Rscript 01_generate_original_data.R
 
@@ -122,8 +98,6 @@ fi
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-
-# Fixed counting for Parquet files
 OD_COUNT=$(ls -1 ../data/original/OD_*.parquet 2>/dev/null | wc -l)
 log_success "OD generation complete in ${DURATION}s (${OD_COUNT} file(s))"
 cd ..
@@ -136,13 +110,6 @@ log_info "STEP 2: Generating Synthetic Data (SD) via CART, NORM, PMM ..."
 echo ""
 
 cd 02_generate_SD
-
-# Clear old data (Fixed for Parquet)
-if [ -d "../data/synthetic" ]; then
-    log_warning "Removing old synthetic data..."
-    rm -f ../data/synthetic/*.parquet 2>/dev/null || true
-fi
-
 START_TIME=$(date +%s)
 Rscript 02_generate_synthetic_data.R
 
@@ -153,18 +120,30 @@ fi
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-
-# Fixed counting for Parquet files
 SD_COUNT=$(ls -1 ../data/synthetic/SD_*.parquet 2>/dev/null | wc -l)
 log_success "SD generation complete in ${DURATION}s (${SD_COUNT} file(s))"
 cd ..
 echo ""
 
+# ==============================================================================
+# STEP 3: Parallel OLS Regression Evaluation (Python)
+# ==============================================================================
+log_info "STEP 3: Running Parallel OLS Regressions ..."
+echo ""
+
+cd 03_regression_analysis
+START_TIME=$(date +%s)
+$PYTHON_CMD 03_regression.py
+
+if [ $? -ne 0 ]; then
+    log_error "Regression evaluation failed!"
+    exit 1
+fi
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-
-log_success "Evaluation complete in ${DURATION}s"
+log_success "Regression evaluation complete in ${DURATION}s"
+cd ..
 echo ""
 
 # ==============================================================================
@@ -180,15 +159,7 @@ echo "📁 Output Locations:"
 echo "   ├─ Config:          config/config.json"
 echo "   ├─ Original Data:   data/original/ (${OD_COUNT} files)"
 echo "   ├─ Synthetic Data:  data/synthetic/ (${SD_COUNT} files)"
-echo "   ├─ Models:          models/ (${MODEL_COUNT} pkl files)"
-echo "   ├─ Results CSV:     results/evaluation_metrics.csv"
-echo "   └─ Plots:           results/plot_*.png"
-echo ""
-echo "📊 Next Steps:"
-echo "   1. Review metrics:  cat results/evaluation_metrics.csv"
-echo "   2. View plots:      open results/plot_*.png"
-echo "   3. Explore models:  jupyter notebook 03_regression_analysis/"
-echo "   4. Explore eval:    jupyter notebook 04_evaluation/"
+echo "   └─ Results Data:    results/aggregated_model_metrics.parquet"
 echo ""
 
 PIPELINE_END_TIME=$(date +%s)
@@ -201,5 +172,4 @@ if [ $MINUTES -gt 0 ]; then
 else
     log_success "Total pipeline runtime: ${SECONDS}s"
 fi
-
 echo "=============================================================================="
