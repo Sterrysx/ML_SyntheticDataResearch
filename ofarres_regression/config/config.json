@@ -4,7 +4,7 @@
     "p": [3, 10],
     "var_type": ["continuous", "binary"],
     "random_seed_base": 16,
-    "M": 10000
+    "M": 50
   },
   "parameters": {
     "rho": [0.0, 0.3, 0.6],
