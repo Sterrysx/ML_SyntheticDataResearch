@@ -1,10 +1,10 @@
 {
   "simulation": {
     "N": [100, 1000],
-    "p": [3, 10],
+    "p": [2, 5, 10],
     "var_type": ["continuous", "binary"],
     "random_seed_base": 16,
-    "M": 50
+    "M": 1000
   },
   "parameters": {
     "rho": [0.0, 0.3, 0.6],
