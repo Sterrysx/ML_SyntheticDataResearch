@@ -2,9 +2,8 @@
 # ==============================================================================
 # SCRIPT:  03_regression.py
 # PURPOSE: OLS regression comparison between Original and Synthetic Data.
-#          Memory-efficient streaming: processes one file-pair at a time.
-#          Peak RAM ≈ 2× the largest single parquet file (~200 MB typical),
-#          instead of 40+ GB from the old load-everything-into-RAM approach.
+#          Parallel across 18 cores via multiprocessing.Pool.
+#          Each worker reads its own SD + OD pair — low per-process memory.
 # ==============================================================================
 
 import json
@@ -15,6 +14,7 @@ import gc
 import warnings
 import time
 import sys
+import multiprocessing as mp
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -22,6 +22,8 @@ import pandas as pd
 import statsmodels.api as sm
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+N_WORKERS = 18
 
 # ── Terminal Colors & Formatting ──────────────────────────────────────────────
 class Colors:
@@ -121,7 +123,7 @@ def _show_progress(idx, total, filename, n_models, t0):
 # ══════════════════════════════════════════════════════════════════════════════
 print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*78}{Colors.ENDC}")
 print(f"{Colors.HEADER}{Colors.BOLD}"
-      f"   MEMORY-EFFICIENT OLS REGRESSION PIPELINE  (streaming, file-by-file)   "
+      f"   PARALLEL OLS REGRESSION PIPELINE  ({N_WORKERS} cores)                       "
       f"{Colors.ENDC}")
 print(f"{Colors.HEADER}{Colors.BOLD}{'='*78}{Colors.ENDC}")
 print(f"{Colors.DIM}NumPy {np.__version__}  \u2022  pandas {pd.__version__}  \u2022  "
@@ -183,7 +185,7 @@ for fp in od_files:
 log_success(f"Found {len(od_files)} OD + {len(sd_files)} SD files  "
             f"({len(od_map)} unique OD scenarios)")
 
-# ── Parse SD files & sort by OD-key for cache locality ───────────────────────
+# ── Parse SD files ────────────────────────────────────────────────────────────
 sd_tasks = []
 skipped_files = 0
 for fp in sd_files:
@@ -205,64 +207,70 @@ for fp in sd_files:
         "rho":      float(m.group(5)),
         "sig_str":  m.group(6),
         "od_key":   od_key,
+        "od_fp":    od_map[od_key],
     })
 
-# Sort so tasks sharing the same OD file are consecutive → one read per OD file
-sd_tasks.sort(key=lambda t: t["od_key"])
 total_tasks = len(sd_tasks)
-log_info(f"{total_tasks} SD files to process  "
-         f"({skipped_files} skipped, no OD match or bad filename)")
+log_info(f"{total_tasks} SD files to process ({skipped_files} skipped)  |  "
+         f"{N_WORKERS} worker processes")
+if skipped_files:
+    log_warn(f"Skipped {skipped_files} SD file(s) (missing OD match or bad filename)")
 
-# ── Stream through files (one pair at a time) ────────────────────────────────
-all_results   = []
-total_models  = 0
-failed_iters  = 0
-t_global      = time.time()
+# ── Parallel Worker Function ──────────────────────────────────────────────────
+def _process_one_sd(task):
+    """Standalone worker: reads OD + SD, runs OLS per iteration, returns list[dict]."""
+    import numpy as _np
+    import pandas as _pd
+    import statsmodels.api as _sm
 
-prev_od_key   = None
-od_cache       = None            # cached DataFrame for the current OD file
-od_groups_cache = None           # cached groupby dict for current OD file
+    MAX_P_W = 10
 
-for task_idx, task in enumerate(sd_tasks):
+    def _pad_w(arr, length=MAX_P_W + 1):
+        out = _np.full(length, _np.nan)
+        out[:len(arr)] = arr
+        return out
+
+    def _fit_w(X, y):
+        Xc = _sm.add_constant(X, has_constant="add")
+        try:
+            r = _sm.OLS(y, Xc).fit()
+            return r.params, r.bse, r.pvalues, r.rsquared_adj
+        except Exception:
+            k = Xc.shape[1]
+            nan_k = _np.full(k, _np.nan)
+            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan
+
     fp       = task["fp"]
+    od_fp    = task["od_fp"]
     method   = task["method"]
     var_type = task["var_type"]
     N        = task["N"]
     p_val    = task["p"]
     rho      = task["rho"]
     sig_str  = task["sig_str"]
-    od_key   = task["od_key"]
-    sigma_out = np.nan if sig_str == "NA" else float(sig_str)
-    x_cols    = [f"X{i}" for i in range(1, p_val + 1)]
+    sigma_out = _np.nan if sig_str == "NA" else float(sig_str)
+    x_cols   = [f"X{i}" for i in range(1, p_val + 1)]
 
-    # ── Load OD (only when the key changes) ────────────────────────────────
-    if od_key != prev_od_key:
-        del od_cache, od_groups_cache
-        gc.collect()
-        od_cache = pd.read_parquet(od_map[od_key])
-        od_groups_cache = {k: v for k, v in od_cache.groupby("iter")}
-        prev_od_key = od_key
+    od_df = _pd.read_parquet(od_fp)
+    sd_df = _pd.read_parquet(fp)
 
-    # ── Load SD ────────────────────────────────────────────────────────────
-    sd_df = pd.read_parquet(fp)
+    od_groups = {k: v for k, v in od_df.groupby("iter")}
     sd_groups = {k: v for k, v in sd_df.groupby("iter")}
-    del sd_df
+    del od_df, sd_df
 
-    # ── Run OLS regressions per iteration ──────────────────────────────────
-    batch = []
+    rows = []
     for it, sd_grp in sd_groups.items():
-        od_grp = od_groups_cache.get(it)
+        od_grp = od_groups.get(it)
         if od_grp is None:
-            failed_iters += 1
             continue
 
-        X_od = od_grp[x_cols].to_numpy(dtype=np.float64)
-        y_od = od_grp["y"].to_numpy(dtype=np.float64)
-        X_sd = sd_grp[x_cols].to_numpy(dtype=np.float64)
-        y_sd = sd_grp["y"].to_numpy(dtype=np.float64)
+        X_od = od_grp[x_cols].to_numpy(dtype=_np.float64)
+        y_od = od_grp["y"].to_numpy(dtype=_np.float64)
+        X_sd = sd_grp[x_cols].to_numpy(dtype=_np.float64)
+        y_sd = sd_grp["y"].to_numpy(dtype=_np.float64)
 
-        b_od, se_od, pv_od, r2_od = _fit_ols(X_od, y_od)
-        b_sd, se_sd, pv_sd, r2_sd = _fit_ols(X_sd, y_sd)
+        b_od, se_od, pv_od, r2_od = _fit_w(X_od, y_od)
+        b_sd, se_sd, pv_sd, r2_sd = _fit_w(X_sd, y_sd)
 
         row = {
             "method": method, "var_type": var_type,
@@ -270,36 +278,37 @@ for task_idx, task in enumerate(sd_tasks):
             "sigma_2": sigma_out, "iter": int(it),
             "adj_r2_od": r2_od, "adj_r2_sd": r2_sd,
         }
-        for i, v in enumerate(_pad(b_od)):  row[f"beta_od_{i}"] = v
-        for i, v in enumerate(_pad(b_sd)):  row[f"beta_sd_{i}"] = v
-        for i, v in enumerate(_pad(se_od)): row[f"se_od_{i}"]   = v
-        for i, v in enumerate(_pad(se_sd)): row[f"se_sd_{i}"]   = v
-        for i, v in enumerate(_pad(pv_od)): row[f"pval_od_{i}"] = v
-        for i, v in enumerate(_pad(pv_sd)): row[f"pval_sd_{i}"] = v
-        batch.append(row)
+        for i, v in enumerate(_pad_w(b_od)):  row[f"beta_od_{i}"] = v
+        for i, v in enumerate(_pad_w(b_sd)):  row[f"beta_sd_{i}"] = v
+        for i, v in enumerate(_pad_w(se_od)): row[f"se_od_{i}"]   = v
+        for i, v in enumerate(_pad_w(se_sd)): row[f"se_sd_{i}"]   = v
+        for i, v in enumerate(_pad_w(pv_od)): row[f"pval_od_{i}"] = v
+        for i, v in enumerate(_pad_w(pv_sd)): row[f"pval_sd_{i}"] = v
+        rows.append(row)
+    return rows
 
-    total_models += len(batch) * 2          # each pair = 2 OLS fits
-    all_results.extend(batch)
-    del batch, sd_groups
-    gc.collect()
+# ── Dispatch with multiprocessing.Pool ────────────────────────────────────────
+t_global      = time.time()
+total_models  = 0
+all_results   = []
 
-    _show_progress(task_idx, total_tasks, fp, total_models, t_global)
-
-# End progress display
+log_info(f"Dispatching {total_tasks} SD files across {N_WORKERS} cores …")
+print()   # blank lines for progress display
 print()
 
-# ── Cleanup & Summary ─────────────────────────────────────────────────────────
-del od_cache, od_groups_cache
-gc.collect()
+with mp.Pool(processes=N_WORKERS) as pool:
+    for task_idx, rows in enumerate(pool.imap_unordered(_process_one_sd, sd_tasks)):
+        all_results.extend(rows)
+        total_models += len(rows) * 2
+        _show_progress(task_idx, total_tasks,
+                       sd_tasks[task_idx]["fp"] if task_idx < len(sd_tasks) else "",
+                       total_models, t_global)
+
+print()
 
 elapsed = time.time() - t_global
 log_success(f"Completed {total_models:,} OLS fits in {elapsed:.1f}s "
             f"({total_models / max(elapsed, 1e-9):,.0f} models/sec)")
-
-if skipped_files:
-    log_warn(f"Skipped {skipped_files} SD file(s) (missing OD match or bad filename)")
-if failed_iters:
-    log_warn(f"Skipped {failed_iters} iteration(s) (missing in OD data)")
 
 # ── Save Results ──────────────────────────────────────────────────────────────
 log_info("Saving results \u2026")

@@ -1,9 +1,9 @@
 # Python Package Requirements for Synthetic Data Clustering Pipeline
-# 
+#
 # Install with: pip install -r requirements.txt
-# 
-# Prerequisites: 
-#   1. Create conda environment: conda create -n synthetic_data python=3.9
+#
+# Prerequisites:
+#   1. Create conda environment: conda create -n synthetic_data python=3.13
 #   2. Activate environment: conda activate synthetic_data
 #   3. Install packages: pip install -r requirements.txt
 
@@ -12,6 +12,7 @@
 # ============================================================================
 pandas>=2.0.0
 numpy>=1.23.0
+pyarrow>=14.0.0
 
 # ============================================================================
 # Machine Learning & Clustering
@@ -30,28 +31,10 @@ seaborn>=0.12.0
 scipy>=1.10.0
 
 # ============================================================================
-# Parallel Processing & Utilities
-# ============================================================================
-joblib>=1.2.0
-tqdm>=4.64.0
-
-# ============================================================================
-# Jupyter Notebook Support
+# Jupyter Notebook Support (for 04_evaluation notebooks)
 # ============================================================================
 jupyter>=1.0.0
 jupyterlab>=4.0.0
 notebook>=6.5.0
-nbconvert>=7.0.0
 ipykernel>=6.19.0
 ipywidgets>=8.0.0
-
-# ============================================================================
-# Additional Dependencies (auto-installed with above)
-# ============================================================================
-# These are typically installed as dependencies but listed for reference:
-# - ipython
-# - traitlets
-# - tornado
-# - pyzmq
-# - jupyter-client
-# - jupyter-core

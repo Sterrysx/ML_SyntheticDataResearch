@@ -2,7 +2,7 @@
   "simulation": {
     "N": 1000,
     "n": 5,
-    "m": 10,
+    "m": 100,
     "random_seed_base": 16
   },
   "parameters": {

@@ -5,8 +5,8 @@
 # ============================================================
 # Generated Data Files
 # ============================================================
-clustering/data/real/*.csv
-clustering/data/synthetic/*.csv
+clustering/data/real/*
+clustering/data/synthetic/*
 
 # Ignore all files in the regression data folders
 regression/data/original/*
