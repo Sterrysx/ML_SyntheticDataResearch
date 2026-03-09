@@ -5,45 +5,45 @@
 # ============================================================
 # Generated Data Files
 # ============================================================
-ofarres/data/real/*.csv
-ofarres/data/synthetic/*.csv
+clustering/data/real/*.csv
+clustering/data/synthetic/*.csv
 
-# Ignore all files in the ofarres_regression data folders
-ofarres_regression/data/original/*
-ofarres_regression/data/synthetic/*
+# Ignore all files in the regression data folders
+regression/data/original/*
+regression/data/synthetic/*
 
-ofarres_regression/data/*
+regression/data/*
 
 # Ignore the heavy raw results, but keep the summary and plots
-ofarres_regression/results/aggregated_model_metrics.parquet
+regression/results/aggregated_model_metrics.parquet
 
-ofarres_regression/results/evaluation_metrics.parquet
-ofarres_regression/results/figures/
+regression/results/evaluation_metrics.parquet
+regression/results/figures/
 
 # Keep the directory structure intact (optional but recommended)
-!ofarres_regression/data/original/.gitkeep
-!ofarres_regression/data/synthetic/.gitkeep
+!regression/data/original/.gitkeep
+!regression/data/synthetic/.gitkeep
 
 # Keep directory structure
-!ofarres/data/real/.gitkeep
-!ofarres/data/synthetic/.gitkeep
+!clustering/data/real/.gitkeep
+!clustering/data/synthetic/.gitkeep
 
-ofarres_regression/models/*.pkl
+regression/models/*.pkl
 
 # Ignore everything inside the data directory
-ofarres_regression/data/**/*
+regression/data/**/*
 
 # Optional: Ensure the folders stay in git even if empty (requires a .gitkeep file inside them)
-!ofarres_regression/data/**/.gitkeep
+!regression/data/**/.gitkeep
 
 
 # ============================================================
 # Results & Output Files
 # ============================================================
-ofarres/02_clustering/clustering_results_final.csv
-ofarres/03_analysis/plot*.png
-ofarres/03_analysis/graphic*.png
-ofarres/03_analysis/*_executed.ipynb
+clustering/02_clustering/clustering_results_final.csv
+clustering/03_analysis/plot*.png
+clustering/03_analysis/graphic*.png
+clustering/03_analysis/*_executed.ipynb
 
 # ============================================================
 # Python
@@ -196,6 +196,6 @@ README_old.md
 # ============================================================
 !.gitignore
 !README.md
-!ofarres/SETUP.md
-!ofarres/requirements.txt
-!ofarres/config/config.json
+!clustering/SETUP.md
+!clustering/requirements.txt
+!clustering/config/config.json
