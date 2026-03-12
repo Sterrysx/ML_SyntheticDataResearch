@@ -79,10 +79,9 @@ if [ -f "$HASH_FILE" ]; then
     if [ "$CONFIG_HASH" != "$PREV_HASH" ]; then
         CONFIG_CHANGED=true
         log_warning "config.json has CHANGED since last run. Nuking all previous data..."
-        rm -f data/original/*.parquet 2>/dev/null || true
-        rm -f data/synthetic/*.parquet 2>/dev/null || true
-        rm -f results/*.parquet 2>/dev/null || true
-        rm -f results/*.csv 2>/dev/null || true
+        find data/original -mindepth 1 -delete 2>/dev/null || true
+        find data/synthetic -mindepth 1 -delete 2>/dev/null || true
+        find results -mindepth 1 -delete 2>/dev/null || true
         log_success "Environment cleaned (config changed)."
     else
         log_success "config.json unchanged — will resume from where we left off."
