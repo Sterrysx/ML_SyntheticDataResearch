@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# SCRIPT:  03_regression.py
-# PURPOSE: OLS regression comparison between Original and Synthetic Data.
+# SCRIPT:  03_regression_logistic.py
+# PURPOSE: Logistic regression comparison between Original and Synthetic Data.
 #          Parallel across 18 cores via multiprocessing.Pool.
 #          Each worker reads its own SD + OD pair — low per-process memory.
 # ==============================================================================
@@ -123,7 +123,7 @@ def _show_progress(idx, total, filename, n_models, t0):
 # ══════════════════════════════════════════════════════════════════════════════
 print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*78}{Colors.ENDC}")
 print(f"{Colors.HEADER}{Colors.BOLD}"
-      f"   PARALLEL OLS REGRESSION PIPELINE  ({N_WORKERS} cores)                       "
+      f"   PARALLEL LOGISTIC REGRESSION PIPELINE  ({N_WORKERS} cores)                   "
       f"{Colors.ENDC}")
 print(f"{Colors.HEADER}{Colors.BOLD}{'='*78}{Colors.ENDC}")
 print(f"{Colors.DIM}NumPy {np.__version__}  \u2022  pandas {pd.__version__}  \u2022  "
@@ -144,9 +144,9 @@ result_dir = os.path.join("..", "results")
 os.makedirs(result_dir, exist_ok=True)
 
 _OD_RE = re.compile(
-    r"OD_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
+    r"OD_logistic_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
 _SD_RE = re.compile(
-    r"SD_(\w+?)_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
+    r"SD_(\w+?)_logistic_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _pad(arr, length=MAX_P + 1):
@@ -155,20 +155,21 @@ def _pad(arr, length=MAX_P + 1):
     return out
 
 def _fit_ols(X, y):
-    """Fit OLS and return (coefs, std_errs, pvalues, adj_r2)."""
+    """Fit Logit and return (coefs, std_errs, pvalues, pseudo_r2, accuracy)."""
     Xc = sm.add_constant(X, has_constant="add")
     try:
-        r = sm.OLS(y, Xc).fit()
-        return r.params, r.bse, r.pvalues, r.rsquared_adj
+        r = sm.Logit(y, Xc).fit(disp=0, maxiter=200)
+        accuracy = np.mean((r.predict(Xc) >= 0.5).astype(int) == y.astype(int))
+        return r.params, r.bse, r.pvalues, r.prsquared, accuracy
     except Exception:
         k = Xc.shape[1]
         nan_k = np.full(k, np.nan)
-        return nan_k, nan_k.copy(), nan_k.copy(), np.nan
+        return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan
 
 # ── Index OD files by (var_type, N, p, rho, sig_str) ─────────────────────────
 log_info("Scanning data directories \u2026")
-od_files = sorted(glob.glob(os.path.join(od_dir, "OD_*.parquet")))
-sd_files = sorted(glob.glob(os.path.join(sd_dir, "SD_*.parquet")))
+od_files = sorted(glob.glob(os.path.join(od_dir, "OD_logistic_*.parquet")))
+sd_files = sorted(glob.glob(os.path.join(sd_dir, "SD_*_logistic_*.parquet")))
 
 if not od_files:
     log_error(f"No OD parquet files in {od_dir}"); sys.exit(1)
@@ -233,12 +234,13 @@ def _process_one_sd(task):
     def _fit_w(X, y):
         Xc = _sm.add_constant(X, has_constant="add")
         try:
-            r = _sm.OLS(y, Xc).fit()
-            return r.params, r.bse, r.pvalues, r.rsquared_adj
+            r = _sm.Logit(y, Xc).fit(disp=0, maxiter=200)
+            accuracy = _np.mean((r.predict(Xc) >= 0.5).astype(int) == y.astype(int))
+            return r.params, r.bse, r.pvalues, r.prsquared, accuracy
         except Exception:
             k = Xc.shape[1]
             nan_k = _np.full(k, _np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan
+            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan
 
     fp       = task["fp"]
     od_fp    = task["od_fp"]
@@ -269,14 +271,15 @@ def _process_one_sd(task):
         X_sd = sd_grp[x_cols].to_numpy(dtype=_np.float64)
         y_sd = sd_grp["y"].to_numpy(dtype=_np.float64)
 
-        b_od, se_od, pv_od, r2_od = _fit_w(X_od, y_od)
-        b_sd, se_sd, pv_sd, r2_sd = _fit_w(X_sd, y_sd)
+        b_od, se_od, pv_od, r2_od, acc_od = _fit_w(X_od, y_od)
+        b_sd, se_sd, pv_sd, r2_sd, acc_sd = _fit_w(X_sd, y_sd)
 
         row = {
             "method": method, "var_type": var_type,
             "N": N, "p": p_val, "rho": rho,
             "sigma_2": sigma_out, "iter": int(it),
-            "adj_r2_od": r2_od, "adj_r2_sd": r2_sd,
+            "pseudo_r2_od": r2_od, "pseudo_r2_sd": r2_sd,
+            "accuracy_od": acc_od, "accuracy_sd": acc_sd,
         }
         for i, v in enumerate(_pad_w(b_od)):  row[f"beta_od_{i}"] = v
         for i, v in enumerate(_pad_w(b_sd)):  row[f"beta_sd_{i}"] = v
@@ -307,7 +310,7 @@ with mp.Pool(processes=N_WORKERS) as pool:
 print()
 
 elapsed = time.time() - t_global
-log_success(f"Completed {total_models:,} OLS fits in {elapsed:.1f}s "
+log_success(f"Completed {total_models:,} Logit fits in {elapsed:.1f}s "
             f"({total_models / max(elapsed, 1e-9):,.0f} models/sec)")
 
 # ── Save Results ──────────────────────────────────────────────────────────────
@@ -316,12 +319,12 @@ df = pd.DataFrame(all_results)
 del all_results
 gc.collect()
 
-nan_od = df["adj_r2_od"].isna().sum()
-nan_sd = df["adj_r2_sd"].isna().sum()
+nan_od = df["pseudo_r2_od"].isna().sum()
+nan_sd = df["pseudo_r2_sd"].isna().sum()
 if nan_od or nan_sd:
     log_warn(f"Failed fits (degenerate data): OD={nan_od}, SD={nan_sd}")
 
-parquet_path = os.path.join(result_dir, "aggregated_model_metrics.parquet")
+parquet_path = os.path.join(result_dir, "aggregated_logistic_metrics.parquet")
 df.to_parquet(parquet_path, index=False, engine="pyarrow")
 
 log_success(f"Saved \u2192 {parquet_path} ({os.path.getsize(parquet_path)/1e6:.1f} MB)")

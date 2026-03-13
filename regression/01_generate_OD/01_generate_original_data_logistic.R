@@ -1,6 +1,6 @@
 # ==============================================================================
-# SCRIPT: 01_generate_original_data.R
-# PURPOSE: Generate Original Data (OD) for a multiple linear regression
+# SCRIPT: 01_generate_original_data_logistic.R
+# PURPOSE: Generate Original Data (OD) for a logistic regression
 #          simulation using parameters from config.json.
 #          ** FULL DYNAMIC QUEUE (WORK STEALING) APPLIED **
 # ==============================================================================
@@ -141,14 +141,14 @@ if (nrow(bin_combos) > 0L) {
 }
 
 # Save cache so background workers can load it natively
-cache_file <- file.path(tempdir(), "od_bin_cache.rds")
+cache_file <- file.path(tempdir(), "od_logistic_bin_cache.rds")
 saveRDS(bin_cache, cache_file)
 cat("\n")
 
 # 6. Build Atomic Task Queue
 # ------------------------------------------------------------------------------
-todo_dir  <- file.path(tempdir(), "od_tasks_todo")
-doing_dir <- file.path(tempdir(), "od_tasks_doing")
+todo_dir  <- file.path(tempdir(), "od_logistic_tasks_todo")
+doing_dir <- file.path(tempdir(), "od_logistic_tasks_doing")
 unlink(todo_dir, recursive = TRUE); unlink(doing_dir, recursive = TRUE)
 dir.create(todo_dir, showWarnings = FALSE)
 dir.create(doing_dir, showWarnings = FALSE)
@@ -160,7 +160,7 @@ grid$scenario_seed <- sample.int(.Machine$integer.max, n_scenarios)
 for (i in seq_len(n_scenarios)) {
   row <- grid[i, ]
   p1_str <- if (is.na(row$p1)) "NA" else sprintf("%.2f", row$p1)
-  scenario_key <- sprintf("OD_%s_N%s_p%s_rho%.1f_sig%.1f_p1%s",
+  scenario_key <- sprintf("OD_logistic_%s_N%s_p%s_rho%.1f_sig%.1f_p1%s",
                           row$var_type, row$N, row$p, row$rho, row$sigma_2, p1_str)
   
   task_data <- list(
@@ -182,7 +182,7 @@ cat(sprintf("[INFO] Dynamic Queue built. %d scenario tasks ready for %d cores.\n
 
 # 7. Generate Independent Worker Script
 # ------------------------------------------------------------------------------
-worker_script <- file.path(tempdir(), "od_worker.R")
+worker_script <- file.path(tempdir(), "od_logistic_worker.R")
 worker_code <- c(
   "args <- commandArgs(trailingOnly = TRUE)",
   "progress_file <- args[1]",
@@ -229,7 +229,7 @@ worker_code <- c(
   "      next",
   "    }",
   "",
-  "    writeLines(paste('OD |', sub('^OD_', '', task$scenario_key)), progress_file)",
+  "    writeLines(paste('OD |', sub('^OD_logistic_', '', task$scenario_key)), progress_file)",
   "",
   "    tryCatch({",
   "      set.seed(task$seed)",
@@ -258,7 +258,8 @@ worker_code <- c(
   "        ",
   "        X_design <- cbind(1, X)",
   "        epsilon  <- rnorm(task$N_cur, mean = 0, sd = sqrt(task$sig2_cur))",
-  "        y        <- as.numeric(X_design %*% current_beta + epsilon)",
+  "        prob     <- 1 / (1 + exp(-as.numeric(X_design %*% current_beta + epsilon)))",
+  "        y        <- rbinom(length(prob), 1, prob)",
   "        ",
   "        df           <- as.data.frame(X)",
   "        colnames(df) <- paste0('X', seq_len(task$p_cur))",
@@ -296,8 +297,8 @@ progress_files <- character(NUM_CORES)
 result_files   <- character(NUM_CORES)
 
 for (i in seq_len(NUM_CORES)) {
-  progress_files[i] <- file.path(tempdir(), sprintf("od_progress_%02d.txt", i))
-  result_files[i]   <- file.path(tempdir(), sprintf("od_result_%02d.rds", i))
+  progress_files[i] <- file.path(tempdir(), sprintf("od_logistic_progress_%02d.txt", i))
+  result_files[i]   <- file.path(tempdir(), sprintf("od_logistic_result_%02d.rds", i))
   
   writeLines("STARTING", progress_files[i])
   if (file.exists(result_files[i])) file.remove(result_files[i])
