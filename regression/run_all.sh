@@ -3,19 +3,20 @@
 # ==============================================================================
 # MASTER EXECUTION SCRIPT: Synthetic Data Regression Research Pipeline
 # ==============================================================================
-# Purpose: Execute the complete 4-step regression simulation pipeline
-# Usage:   cd ofarres_regression && ./run_all.sh
+# Purpose: Execute the complete regression simulation pipeline (linear + logistic)
+# Usage:   cd regression && ./run_all.sh
 # ==============================================================================
 
 set -e  # Exit on any error
 
 # ==============================================================================
-# NEW: ZOMBIE PROCESS CLEANUP TRAP
-# Automatically hunts down and kills orphaned SD workers if you hit Ctrl+C
+# ZOMBIE PROCESS CLEANUP TRAP
+# Automatically hunts down and kills orphaned workers if you hit Ctrl+C
 # ==============================================================================
 cleanup() {
     pkill -f "sd_worker.R" 2>/dev/null || true
-    pkill -f "od_worker.R" 2>/dev/null || true
+    pkill -f "od_linear_worker.R" 2>/dev/null || true
+    pkill -f "od_logistic_worker.R" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -51,7 +52,7 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Banner
 echo "=============================================================================="
-echo "        SYNTHETIC DATA REGRESSION RESEARCH PIPELINE                          "
+echo "        SYNTHETIC DATA REGRESSION RESEARCH PIPELINE (LINEAR + LOGISTIC)      "
 echo "=============================================================================="
 echo ""
 
@@ -110,81 +111,124 @@ else
     exit 1
 fi
 
-echo ""
-
-# ==============================================================================
-# STEP 1: Generate Original Data (R)
-# ==============================================================================
-log_info "STEP 1: Generating Original Data (OD) ..."
-echo ""
-
-cd 01_generate_OD
-
-# Count how many OD files we expect from config:
-# var_types x N_vals x p_vals x rho_vals x sigma_2_vals (continuous + binary grids)
+# Pre-compute expected counts from config
 EXPECTED_CONTINUOUS=$(python3 -c "
-import json; c=json.load(open('../config/config.json'))
+import json; c=json.load(open('config/config.json'))
 if 'continuous' in c['simulation']['var_type']:
     print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']))
 else:
     print(0)
 ")
 EXPECTED_BINARY=$(python3 -c "
-import json; c=json.load(open('../config/config.json'))
+import json; c=json.load(open('config/config.json'))
 if 'binary' in c['simulation']['var_type']:
     print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']) * len(c['parameters']['p1']))
 else:
     print(0)
 ")
-EXPECTED_OD=$((EXPECTED_CONTINUOUS + EXPECTED_BINARY))
-EXISTING_OD=$(ls -1 ../data/original/OD_*.parquet 2>/dev/null | wc -l)
+EXPECTED_OD_PER_BRANCH=$((EXPECTED_CONTINUOUS + EXPECTED_BINARY))
+NUM_METHODS=$(python3 -c "import json; c=json.load(open('config/config.json')); print(len(c['synthesis']['methods']))")
+METHOD_NAMES=$(python3 -c "import json; c=json.load(open('config/config.json')); print(', '.join(m.upper() for m in c['synthesis']['methods']))")
 
-if [ "$EXISTING_OD" -ge "$EXPECTED_OD" ]; then
-    log_success "All $EXPECTED_OD OD file(s) already exist — skipping Step 1."
-    OD_COUNT=$EXISTING_OD
+echo ""
+
+# ==============================================================================
+# STEP 1a: Generate Linear Original Data (R)
+# ==============================================================================
+log_info "STEP 1a: Generating Linear Original Data (OD_linear) ..."
+echo ""
+
+cd 01_generate_OD
+
+EXISTING_OD_LINEAR=$(ls -1 ../data/original/OD_linear_*.parquet 2>/dev/null | wc -l)
+
+if [ "$EXISTING_OD_LINEAR" -ge "$EXPECTED_OD_PER_BRANCH" ]; then
+    log_success "All $EXPECTED_OD_PER_BRANCH linear OD file(s) already exist — skipping Step 1a."
+    OD_LINEAR_COUNT=$EXISTING_OD_LINEAR
 else
-    if [ "$EXISTING_OD" -gt 0 ]; then
-        log_info "Resuming OD generation: $EXISTING_OD / $EXPECTED_OD already complete."
+    if [ "$EXISTING_OD_LINEAR" -gt 0 ]; then
+        log_info "Resuming linear OD generation: $EXISTING_OD_LINEAR / $EXPECTED_OD_PER_BRANCH already complete."
     fi
     START_TIME=$(date +%s)
 
-    # --- 1A: Continuous Variables ---
-    log_info "-> Phase 1A: Generating Continuous Data..."
-    Rscript 01_generate_original_data.R continuous
+    log_info "-> Phase 1a-i: Generating Continuous Data (linear)..."
+    Rscript 01_generate_original_data_linear.R continuous
 
     if [ $? -ne 0 ]; then
-        log_error "Phase 1A (Continuous) OD generation failed!"
+        log_error "Phase 1a-i (Continuous linear) OD generation failed!"
         exit 1
     fi
 
-    # --- 1B: Binary Variables ---
     echo ""
-    log_info "-> Phase 1B: Generating Binary Data (This will take longer)..."
-    Rscript 01_generate_original_data.R binary
+    log_info "-> Phase 1a-ii: Generating Binary Data (linear)..."
+    Rscript 01_generate_original_data_linear.R binary
 
     if [ $? -ne 0 ]; then
-        log_error "Phase 1B (Binary) OD generation failed!"
+        log_error "Phase 1a-ii (Binary linear) OD generation failed!"
         exit 1
     fi
 
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-    OD_COUNT=$(ls -1 ../data/original/OD_*.parquet 2>/dev/null | wc -l)
-    log_success "OD generation complete in ${DURATION}s (${OD_COUNT} file(s))"
+    OD_LINEAR_COUNT=$(ls -1 ../data/original/OD_linear_*.parquet 2>/dev/null | wc -l)
+    log_success "Linear OD generation complete in ${DURATION}s (${OD_LINEAR_COUNT} file(s))"
 fi
+
+echo ""
+
+# ==============================================================================
+# STEP 1b: Generate Logistic Original Data (R)
+# ==============================================================================
+log_info "STEP 1b: Generating Logistic Original Data (OD_logistic) ..."
+echo ""
+
+EXISTING_OD_LOGISTIC=$(ls -1 ../data/original/OD_logistic_*.parquet 2>/dev/null | wc -l)
+
+if [ "$EXISTING_OD_LOGISTIC" -ge "$EXPECTED_OD_PER_BRANCH" ]; then
+    log_success "All $EXPECTED_OD_PER_BRANCH logistic OD file(s) already exist — skipping Step 1b."
+    OD_LOGISTIC_COUNT=$EXISTING_OD_LOGISTIC
+else
+    if [ "$EXISTING_OD_LOGISTIC" -gt 0 ]; then
+        log_info "Resuming logistic OD generation: $EXISTING_OD_LOGISTIC / $EXPECTED_OD_PER_BRANCH already complete."
+    fi
+    START_TIME=$(date +%s)
+
+    log_info "-> Phase 1b-i: Generating Continuous Data (logistic)..."
+    Rscript 01_generate_original_data_logistic.R continuous
+
+    if [ $? -ne 0 ]; then
+        log_error "Phase 1b-i (Continuous logistic) OD generation failed!"
+        exit 1
+    fi
+
+    echo ""
+    log_info "-> Phase 1b-ii: Generating Binary Data (logistic)..."
+    Rscript 01_generate_original_data_logistic.R binary
+
+    if [ $? -ne 0 ]; then
+        log_error "Phase 1b-ii (Binary logistic) OD generation failed!"
+        exit 1
+    fi
+
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    OD_LOGISTIC_COUNT=$(ls -1 ../data/original/OD_logistic_*.parquet 2>/dev/null | wc -l)
+    log_success "Logistic OD generation complete in ${DURATION}s (${OD_LOGISTIC_COUNT} file(s))"
+fi
+
+OD_COUNT=$((OD_LINEAR_COUNT + OD_LOGISTIC_COUNT))
 
 cd ..
 echo ""
 
 # ==============================================================================
-# STEP 2: Generate Synthetic Data (R)
+# STEP 2: Generate Synthetic Data for ALL OD files (R)
 # ==============================================================================
-NUM_METHODS=$(python3 -c "import json; c=json.load(open('config/config.json')); print(len(c['synthesis']['methods']))")
-METHOD_NAMES=$(python3 -c "import json; c=json.load(open('config/config.json')); print(', '.join(m.upper() for m in c['synthesis']['methods']))")
 EXPECTED_SD=$((OD_COUNT * NUM_METHODS))
 EXISTING_SD=$(ls -1 data/synthetic/SD_*.parquet 2>/dev/null | wc -l)
 
 log_info "STEP 2: Generating Synthetic Data (SD) via ${METHOD_NAMES} ..."
+log_info "  OD total: ${OD_COUNT} (${OD_LINEAR_COUNT} linear + ${OD_LOGISTIC_COUNT} logistic) x ${NUM_METHODS} methods = ${EXPECTED_SD} SD files"
 echo ""
 
 if [ "$EXISTING_SD" -ge "$EXPECTED_SD" ]; then
@@ -213,26 +257,51 @@ fi
 echo ""
 
 # ==============================================================================
-# STEP 3: Parallel OLS Regression Evaluation (Python)
+# STEP 3a: Parallel Linear (OLS) Regression (Python)
 # ==============================================================================
-log_info "STEP 3: Running Parallel OLS Regressions ..."
+log_info "STEP 3a: Running Parallel OLS Regressions (linear branch) ..."
 echo ""
 
 if [ -f "results/aggregated_model_metrics.parquet" ]; then
-    log_success "Regression results already exist — skipping Step 3."
+    log_success "Linear regression results already exist — skipping Step 3a."
 else
     cd 03_regression_analysis
     START_TIME=$(date +%s)
-    $PYTHON_CMD 03_regression.py
+    $PYTHON_CMD 03_regression_linear.py
 
     if [ $? -ne 0 ]; then
-        log_error "Regression evaluation failed!"
+        log_error "Linear regression evaluation failed!"
         exit 1
     fi
 
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-    log_success "Regression evaluation complete in ${DURATION}s"
+    log_success "Linear regression evaluation complete in ${DURATION}s"
+    cd ..
+fi
+echo ""
+
+# ==============================================================================
+# STEP 3b: Parallel Logistic Regression (Python)
+# ==============================================================================
+log_info "STEP 3b: Running Parallel Logistic Regressions (logistic branch) ..."
+echo ""
+
+if [ -f "results/aggregated_logistic_metrics.parquet" ]; then
+    log_success "Logistic regression results already exist — skipping Step 3b."
+else
+    cd 03_regression_analysis
+    START_TIME=$(date +%s)
+    $PYTHON_CMD 03_regression_logistic.py
+
+    if [ $? -ne 0 ]; then
+        log_error "Logistic regression evaluation failed!"
+        exit 1
+    fi
+
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    log_success "Logistic regression evaluation complete in ${DURATION}s"
     cd ..
 fi
 echo ""
@@ -247,10 +316,11 @@ echo ""
 log_success "All steps completed successfully!"
 echo ""
 echo "📁 Output Locations:"
-echo "   ├─ Config:          config/config.json"
-echo "   ├─ Original Data:   data/original/ (${OD_COUNT} files)"
-echo "   ├─ Synthetic Data:  data/synthetic/ (${SD_COUNT} files)"
-echo "   └─ Results Data:    results/aggregated_model_metrics.parquet"
+echo "   ├─ Config:            config/config.json"
+echo "   ├─ Original Data:     data/original/ (${OD_COUNT} files: ${OD_LINEAR_COUNT} linear + ${OD_LOGISTIC_COUNT} logistic)"
+echo "   ├─ Synthetic Data:    data/synthetic/ (${SD_COUNT} files)"
+echo "   ├─ Linear Results:    results/aggregated_model_metrics.parquet"
+echo "   └─ Logistic Results:  results/aggregated_logistic_metrics.parquet"
 echo ""
 
 PIPELINE_END_TIME=$(date +%s)
