@@ -159,11 +159,15 @@ def _fit_ols(X, y):
     Xc = sm.add_constant(X, has_constant="add")
     try:
         r = sm.OLS(y, Xc).fit()
-        return r.params, r.bse, r.pvalues, r.rsquared_adj
+        return r.params, r.bse, r.pvalues, r.rsquared_adj, "ok"
+    except np.linalg.LinAlgError:
+        k = Xc.shape[1]
+        nan_k = np.full(k, np.nan)
+        return nan_k, nan_k.copy(), nan_k.copy(), np.nan, "singular"
     except Exception:
         k = Xc.shape[1]
         nan_k = np.full(k, np.nan)
-        return nan_k, nan_k.copy(), nan_k.copy(), np.nan
+        return nan_k, nan_k.copy(), nan_k.copy(), np.nan, "failed"
 
 # ── Index OD files by (var_type, N, p, rho, sig_str) ─────────────────────────
 log_info("Scanning data directories \u2026")
@@ -234,11 +238,15 @@ def _process_one_sd(task):
         Xc = _sm.add_constant(X, has_constant="add")
         try:
             r = _sm.OLS(y, Xc).fit()
-            return r.params, r.bse, r.pvalues, r.rsquared_adj
+            return r.params, r.bse, r.pvalues, r.rsquared_adj, "ok"
+        except _np.linalg.LinAlgError:
+            k = Xc.shape[1]
+            nan_k = _np.full(k, _np.nan)
+            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, "singular"
         except Exception:
             k = Xc.shape[1]
             nan_k = _np.full(k, _np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan
+            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, "failed"
 
     fp       = task["fp"]
     od_fp    = task["od_fp"]
@@ -269,13 +277,14 @@ def _process_one_sd(task):
         X_sd = sd_grp[x_cols].to_numpy(dtype=_np.float64)
         y_sd = sd_grp["y"].to_numpy(dtype=_np.float64)
 
-        b_od, se_od, pv_od, r2_od = _fit_w(X_od, y_od)
-        b_sd, se_sd, pv_sd, r2_sd = _fit_w(X_sd, y_sd)
+        b_od, se_od, pv_od, r2_od, status_od = _fit_w(X_od, y_od)
+        b_sd, se_sd, pv_sd, r2_sd, status_sd = _fit_w(X_sd, y_sd)
 
         row = {
             "method": method, "var_type": var_type,
             "N": N, "p": p_val, "rho": rho,
             "sigma_2": sigma_out, "iter": int(it),
+            "fit_status_od": status_od, "fit_status_sd": status_sd,
             "adj_r2_od": r2_od, "adj_r2_sd": r2_sd,
         }
         for i, v in enumerate(_pad_w(b_od)):  row[f"beta_od_{i}"] = v
