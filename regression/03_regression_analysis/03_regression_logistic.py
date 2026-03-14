@@ -158,7 +158,31 @@ def _fit_logit(X, y):
     """Fit Logit and return (coefs, std_errs, pvalues, pseudo_r2, accuracy, status)."""
     Xc = sm.add_constant(X, has_constant="add")
     try:
-        r = sm.Logit(y, Xc).fit(disp=0, maxiter=200)
+        import warnings as _warnings
+        with _warnings.catch_warnings(record=True) as _w:
+            _warnings.simplefilter("always")
+            r = sm.Logit(y, Xc).fit(disp=0, maxiter=200)
+        warned_separation = any(
+            issubclass(w.category, sm.tools.sm_exceptions.PerfectSeparationWarning)
+            for w in _w
+        )
+        warned_hessian = any(
+            issubclass(w.category, sm.tools.sm_exceptions.HessianInversionWarning)
+            for w in _w
+        )
+        bse_nan = np.all(np.isnan(r.bse))
+        if warned_separation or bse_nan:
+            k = Xc.shape[1]
+            nan_k = np.full(k, np.nan)
+            return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "separation"
+        if warned_hessian:
+            k = Xc.shape[1]
+            nan_k = np.full(k, np.nan)
+            return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "hessian"
+        if np.any(np.abs(r.params) > 20):
+            k = Xc.shape[1]
+            nan_k = np.full(k, np.nan)
+            return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "unstable"
         accuracy = np.mean((r.predict(Xc) >= 0.5).astype(int) == y.astype(int))
         return r.params, r.bse, r.pvalues, r.prsquared, accuracy, "ok"
     except sm.tools.sm_exceptions.PerfectSeparationError:
@@ -247,12 +271,27 @@ def _process_one_sd(task):
                 issubclass(w.category, _sm.tools.sm_exceptions.PerfectSeparationWarning)
                 for w in _w
             )
+            # HessianInversion means SEs are unreliable — coefficients may be extreme
+            warned_hessian = any(
+                issubclass(w.category, _sm.tools.sm_exceptions.HessianInversionWarning)
+                for w in _w
+            )
             # Hessian inversion failure means bse/pvalues are NaN even if fit "converged"
             bse_nan = _np.all(_np.isnan(r.bse))
             if warned_separation or bse_nan:
                 k = Xc.shape[1]
                 nan_k = _np.full(k, _np.nan)
                 return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "separation"
+            if warned_hessian:
+                k = Xc.shape[1]
+                nan_k = _np.full(k, _np.nan)
+                return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "hessian"
+            # Coefficients with extreme magnitude indicate near-separation that
+            # didn't trigger an explicit warning — treat as numerically unstable.
+            if _np.any(_np.abs(r.params) > 20):
+                k = Xc.shape[1]
+                nan_k = _np.full(k, _np.nan)
+                return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "unstable"
             accuracy = _np.mean((r.predict(Xc) >= 0.5).astype(int) == y.astype(int))
             return r.params, r.bse, r.pvalues, r.prsquared, accuracy, "ok"
         except _sm.tools.sm_exceptions.PerfectSeparationError:

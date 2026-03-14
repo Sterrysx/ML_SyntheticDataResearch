@@ -14,7 +14,7 @@
       "binary"
     ],
     "random_seed_base": 16,
-    "M": 20
+    "M": 50
   },
   "parameters": {
     "rho": [
