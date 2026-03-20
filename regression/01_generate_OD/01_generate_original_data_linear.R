@@ -47,7 +47,7 @@ base_seed    <- config$simulation$random_seed_base
 M            <- config$simulation$M
 
 rho_vals     <- config$parameters$rho
-sigma_2_vals <- config$parameters$sigma_2
+sigma_2_vals <- config$parameters$linear$sigma_2
 p1_vals      <- config$parameters$p1
 beta_full    <- config$parameters$beta   
 
@@ -257,8 +257,12 @@ worker_code <- c(
   "        }",
   "        ",
   "        X_design <- cbind(1, X)",
-  "        epsilon  <- rnorm(task$N_cur, mean = 0, sd = sqrt(task$sig2_cur))",
-  "        y        <- as.numeric(X_design %*% current_beta + epsilon)",
+  "        beta_raw  <- current_beta[-1]",
+  "        lp_var    <- as.numeric(t(beta_raw) %*% Sigma %*% beta_raw)",
+  "        beta_norm <- c(current_beta[1], beta_raw / sqrt(lp_var))",
+  "        ",
+  "        epsilon <- rnorm(task$N_cur, mean = 0, sd = sqrt(task$sig2_cur))",
+  "        y       <- as.numeric(X_design %*% beta_norm + epsilon)",
   "        ",
   "        df           <- as.data.frame(X)",
   "        colnames(df) <- paste0('X', seq_len(task$p_cur))",

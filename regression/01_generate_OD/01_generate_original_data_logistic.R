@@ -47,7 +47,7 @@ base_seed    <- config$simulation$random_seed_base
 M            <- config$simulation$M
 
 rho_vals     <- config$parameters$rho
-sigma_2_vals <- config$parameters$sigma_2
+gamma_vals   <- config$parameters$logistic$gamma
 p1_vals      <- config$parameters$p1
 beta_full    <- config$parameters$beta   
 
@@ -72,7 +72,7 @@ if ("continuous" %in% var_types) {
     N        = N_vals,
     p        = p_vals,
     rho      = rho_vals,
-    sigma_2  = sigma_2_vals,
+    gamma    = gamma_vals,
     p1       = NA_real_,
     stringsAsFactors = FALSE
   )
@@ -84,7 +84,7 @@ if ("binary" %in% var_types) {
     N        = N_vals,
     p        = p_vals,
     rho      = rho_vals,
-    sigma_2  = sigma_2_vals,  
+    gamma    = gamma_vals,
     p1       = p1_vals,
     stringsAsFactors = FALSE
   )
@@ -160,16 +160,16 @@ grid$scenario_seed <- sample.int(.Machine$integer.max, n_scenarios)
 for (i in seq_len(n_scenarios)) {
   row <- grid[i, ]
   p1_str <- if (is.na(row$p1)) "NA" else sprintf("%.2f", row$p1)
-  scenario_key <- sprintf("OD_logistic_%s_N%s_p%s_rho%.1f_sig%.1f_p1%s",
-                          row$var_type, row$N, row$p, row$rho, row$sigma_2, p1_str)
-  
+  scenario_key <- sprintf("OD_logistic_%s_N%s_p%s_rho%.1f_gam%.1f_p1%s",
+                          row$var_type, row$N, row$p, row$rho, row$gamma, p1_str)
+
   task_data <- list(
     scenario_key = scenario_key,
     vtype        = row$var_type,
     N_cur        = as.integer(row$N),
     p_cur        = as.integer(row$p),
     rho_cur      = row$rho,
-    sig2_cur     = row$sigma_2,
+    gamma        = row$gamma,
     p1_cur       = row$p1,
     seed         = row$scenario_seed,
     M            = M,
@@ -257,10 +257,12 @@ worker_code <- c(
   "        }",
   "        ",
   "        X_design <- cbind(1, X)",
-  "        # Standard logistic DGP: no additive noise inside the link",
-  "        epsilon  <- rnorm(task$N_cur, mean = 0, sd = 2)",
-  "        prob     <- 1 / (1 + exp(-as.numeric(X_design %*% current_beta)+epsilon))",
-  "        y        <- rbinom(length(prob), 1, prob)",
+  "        beta_raw  <- current_beta[-1]",
+  "        lp_var    <- as.numeric(t(beta_raw) %*% Sigma %*% beta_raw)",
+  "        beta_norm <- c(current_beta[1], beta_raw / sqrt(lp_var) * task$gamma)",
+  "        ",
+  "        prob <- 1 / (1 + exp(-as.numeric(X_design %*% beta_norm)))",
+  "        y    <- rbinom(task$N_cur, 1, prob)",
   "        ",
   "        df           <- as.data.frame(X)",
   "        colnames(df) <- paste0('X', seq_len(task$p_cur))",

@@ -112,23 +112,38 @@ else
 fi
 
 # Pre-compute expected counts from config
-EXPECTED_CONTINUOUS=$(python3 -c "
+EXPECTED_LINEAR_CONTINUOUS=$(python3 -c "
 import json; c=json.load(open('config/config.json'))
 if 'continuous' in c['simulation']['var_type']:
-    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']))
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['linear']['sigma_2']))
 else:
     print(0)
 ")
-EXPECTED_BINARY=$(python3 -c "
+EXPECTED_LINEAR_BINARY=$(python3 -c "
 import json; c=json.load(open('config/config.json'))
 if 'binary' in c['simulation']['var_type']:
-    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']) * len(c['parameters']['p1']))
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['linear']['sigma_2']) * len(c['parameters']['p1']))
 else:
     print(0)
 ")
-EXPECTED_OD_PER_BRANCH=$((EXPECTED_CONTINUOUS + EXPECTED_BINARY))
-NUM_METHODS=$(python3 -c "import json; c=json.load(open('config/config.json')); print(len(c['synthesis']['methods']))")
-METHOD_NAMES=$(python3 -c "import json; c=json.load(open('config/config.json')); print(', '.join(m.upper() for m in c['synthesis']['methods']))")
+EXPECTED_OD_LINEAR=$((EXPECTED_LINEAR_CONTINUOUS + EXPECTED_LINEAR_BINARY))
+EXPECTED_LOGISTIC_CONTINUOUS=$(python3 -c "
+import json; c=json.load(open('config/config.json'))
+if 'continuous' in c['simulation']['var_type']:
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['logistic']['gamma']))
+else:
+    print(0)
+")
+EXPECTED_LOGISTIC_BINARY=$(python3 -c "
+import json; c=json.load(open('config/config.json'))
+if 'binary' in c['simulation']['var_type']:
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['logistic']['gamma']) * len(c['parameters']['p1']))
+else:
+    print(0)
+")
+EXPECTED_OD_LOGISTIC=$((EXPECTED_LOGISTIC_CONTINUOUS + EXPECTED_LOGISTIC_BINARY))
+CONT_METHODS=$(python3 -c "import json; c=json.load(open('config/config.json')); print(', '.join(m.upper() for m in c['synthesis']['continuous_methods']))")
+BIN_METHODS=$(python3 -c "import json; c=json.load(open('config/config.json')); print(', '.join(m.upper() for m in c['synthesis']['binary_methods']))")
 
 echo ""
 

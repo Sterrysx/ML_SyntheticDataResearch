@@ -33,10 +33,12 @@ if (!file.exists(config_path)) {
   stop("config.json not found! Please ensure it is at ../config/config.json")
 }
 
-config      <- fromJSON(config_path)
-syn_methods <- config$synthesis$methods    
+config       <- fromJSON(config_path)
+cont_methods <- config$synthesis$continuous_methods
+bin_methods  <- config$synthesis$binary_methods
 
-cat(sprintf("[INFO] Synthesis methods: %s\n", paste(syn_methods, collapse = ", ")))
+cat(sprintf("[INFO] Continuous methods: %s\n", paste(cont_methods, collapse = ", ")))
+cat(sprintf("[INFO] Binary methods: %s\n", paste(bin_methods, collapse = ", ")))
 
 # 3. Discover OD files 
 # ------------------------------------------------------------------------------
@@ -51,13 +53,32 @@ if (length(od_files) == 0) {
        "\n        Run 01_generate_original_data.R first.")
 }
 
-total <- length(od_files) * length(syn_methods)
-cat(sprintf("[INFO] Found %d OD file(s) x %d methods = %d SD file(s) to generate.\n",
-            length(od_files), length(syn_methods), total))
+cat(sprintf("[INFO] Found %d OD file(s) to synthesise.\n", length(od_files)))
 
-# 4. Build Atomic Task Queue Directory structure
+# 4. Arm enumeration function
 # ------------------------------------------------------------------------------
-NUM_CORES <- 18L 
+get_arms <- function(od_name, cont_methods, bin_methods) {
+  x_is_binary <- grepl("_binary_",   od_name)
+  y_is_binary <- grepl("logistic",   od_name)
+
+  x_methods <- if (x_is_binary) bin_methods  else cont_methods
+  y_methods <- if (y_is_binary) bin_methods  else cont_methods
+
+  if (x_is_binary == y_is_binary) {
+    # Case A or B: same type, enforce same method for all columns
+    arms <- data.frame(x_method = x_methods, y_method = x_methods,
+                       stringsAsFactors = FALSE)
+  } else {
+    # Case C or D: mixed type, full 2x2 factorial
+    arms <- expand.grid(x_method = x_methods, y_method = y_methods,
+                        stringsAsFactors = FALSE)
+  }
+  arms
+}
+
+# 5. Build Atomic Task Queue Directory structure
+# ------------------------------------------------------------------------------
+NUM_CORES <- 18L
 
 todo_dir  <- file.path(tempdir(), "tasks_todo")
 doing_dir <- file.path(tempdir(), "tasks_doing")
@@ -65,13 +86,19 @@ unlink(todo_dir, recursive = TRUE); unlink(doing_dir, recursive = TRUE)
 dir.create(todo_dir, showWarnings = FALSE)
 dir.create(doing_dir, showWarnings = FALSE)
 
-task_i <- 1L
-set.seed(999) 
+set.seed(999)
 shuffled_od_files <- sample(od_files) # Keep shuffle so binary/continuous mix!
 
-for (method in syn_methods) {
-  for (od_path in shuffled_od_files) {
-    task_data <- list(method = method, file = od_path)
+task_i <- 1L
+for (od_path in shuffled_od_files) {
+  od_name <- basename(od_path)
+  arms    <- get_arms(od_name, cont_methods, bin_methods)
+  for (arm_idx in seq_len(nrow(arms))) {
+    task_data <- list(
+      file     = od_path,
+      x_method = arms$x_method[arm_idx],
+      y_method = arms$y_method[arm_idx]
+    )
     saveRDS(task_data, file.path(todo_dir, sprintf("task_%05d.rds", task_i)))
     task_i <- task_i + 1L
   }
@@ -103,7 +130,6 @@ worker_code <- c(
   "",
   "config <- fromJSON('../config/config.json')",
   "base_seed <- config$simulation$random_seed_base",
-  "syn_methods <- config$synthesis$methods",
   "output_dir <- file.path('..', 'data', 'synthetic')",
   "",
   "full_od_files <- sort(list.files(file.path('..', 'data', 'original'), pattern = '^OD_.*[.]parquet$', full.names = TRUE))",
@@ -123,29 +149,29 @@ worker_code <- c(
   "  if (file.rename(target_task, claimed_task)) {",
   "    task <- readRDS(claimed_task)",
   "    od_path <- task$file",
-  "    method <- task$method",
   "    od_name <- basename(od_path)",
   "",
   "    # Extract clean tag (remove 'OD_' and '.parquet')",
   "    scenario_tag <- sub('^OD_', '', sub('\\\\.parquet$', '', od_name))",
-  "    sd_name <- paste0('SD_', method, '_', scenario_tag)",
+  "    arm_tag  <- paste0('X', toupper(task$x_method), '_Y', toupper(task$y_method))",
+  "    sd_name  <- paste0('SD_', arm_tag, '_', scenario_tag)",
   "",
   "    # SKIP if output already exists (resume support)",
   "    out_path <- file.path(output_dir, paste0(sd_name, '.parquet'))",
   "    if (file.exists(out_path)) {",
-  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, method = method)",
+  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, x_method = task$x_method, y_method = task$y_method)",
   "      file.remove(claimed_task)",
   "      next",
   "    }",
   "",
-  "    writeLines(paste(toupper(method), '|', scenario_tag), progress_file)",
+  "    writeLines(paste(arm_tag, '|', scenario_tag), progress_file)",
   "",
   "    tryCatch({",
   "      od_full <- as.data.frame(read_parquet(od_path))",
   "      global_idx <- match(od_path, full_od_files)",
   "",
-  "      is_binary <- grepl('_binary_', od_name)",
-  "      y_is_binary <- all(od_full$y %in% c(0L, 1L, 0, 1))",
+  "      x_is_binary <- grepl('_binary_', od_name)",
+  "      y_is_binary <- grepl('logistic',  od_name)",
   "      x_cols <- grep('^X[0-9]+$', names(od_full)[names(od_full) != 'iter'], value = TRUE)",
   "",
   "      iters <- sort(unique(od_full$iter))",
@@ -155,16 +181,24 @@ worker_code <- c(
   "        od <- od_full[od_full$iter == it, ]",
   "        od$iter <- NULL",
   "",
-  "        syn_seed <- base_seed + (global_idx * 1000L) + match(method, syn_methods) * 100L + it",
+  "        syn_seed <- base_seed + (global_idx * 1000L) + it",
   "",
-  "        if (is_binary && method == 'cart') {",
-  "          for (col in x_cols) od[[col]] <- as.factor(od[[col]])",
+  "        # Build per-column method vector",
+  "        method_vec <- setNames(rep(task$x_method, ncol(od)), names(od))",
+  "        method_vec['y'] <- task$y_method",
+  "",
+  "        # Type conversions for synthpop",
+  "        if (x_is_binary) {",
+  "          if (task$x_method == 'cart') {",
+  "            for (col in x_cols) od[[col]] <- as.factor(od[[col]])",
+  "          }",
   "        }",
-  "        if (y_is_binary && method != 'cart') {",
-  "          od$y <- as.factor(od$y)",
+  "        if (y_is_binary) {",
+  "          if (task$y_method == 'logreg') {",
+  "            od$y <- as.factor(od$y)",
+  "          }",
   "        }",
-  "        method_vec <- setNames(rep(method, ncol(od)), names(od))",
-  "        if (y_is_binary && method != 'cart') method_vec['y'] <- 'logreg'",
+  "",
   "        invisible(capture.output({",
   "          syn_obj <- suppressMessages(suppressWarnings(",
   "            syn(od, method = method_vec, seed = syn_seed, print.flag = FALSE, proper = TRUE)",
@@ -172,21 +206,12 @@ worker_code <- c(
   "        }))",
   "        sd <- syn_obj$syn",
   "",
-  "        if (y_is_binary && method != 'cart') {",
+  "        # Reverse type conversions",
+  "        if (y_is_binary && task$y_method == 'logreg') {",
   "          sd$y <- as.numeric(as.character(sd$y))",
   "        }",
-  "        if (is_binary) {",
-  "          for (col in x_cols) {",
-  "            if (method == 'cart') {",
-  "              sd[[col]] <- as.numeric(as.character(sd[[col]]))",
-  "            } else {",
-  "              # Use empirical quantile of OD to set threshold — preserves marginals",
-  "              # regardless of p1, and avoids the 0.5 coincidence assumption.",
-  "              p_hat <- mean(od[[col]], na.rm = TRUE)",
-  "              thr   <- quantile(sd[[col]], probs = 1 - p_hat, na.rm = TRUE)",
-  "              sd[[col]] <- as.numeric(sd[[col]] >= thr)",
-  "            }",
-  "          }",
+  "        if (x_is_binary && task$x_method == 'cart') {",
+  "          for (col in x_cols) sd[[col]] <- as.numeric(as.character(sd[[col]]))",
   "        }",
   "",
   "        sd$iter <- it",
@@ -196,9 +221,9 @@ worker_code <- c(
   "      combined_sd <- do.call(rbind, sd_list)",
   "      write_parquet(combined_sd, file.path(output_dir, paste0(sd_name, '.parquet')))",
   "",
-  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, method = method)",
+  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, x_method = task$x_method, y_method = task$y_method)",
   "    }, error = function(e) {",
-  "      results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = od_name, method = method)",
+  "      results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = od_name, x_method = task$x_method, y_method = task$y_method)",
   "    })",
   "",
   "    # Delete the task file now that we are done with it",
@@ -311,7 +336,7 @@ for (i in seq_len(NUM_CORES)) {
       count <- count + 1L
     } else {
       errors <- errors + 1L
-      warns  <- c(warns, sprintf("  [WARN] %s / %s: %s", r$method, r$file, r$message))
+      warns  <- c(warns, sprintf("  [WARN] X%s_Y%s / %s: %s", r$x_method, r$y_method, r$file, r$message))
     }
   }
 }
