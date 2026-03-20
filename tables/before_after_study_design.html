@@ -1,0 +1,130 @@
+
+<style>
+*{box-sizing:border-box}
+.wrap{padding:4px 0 24px;font-size:13px;color:var(--color-text-primary)}
+.section{margin-bottom:20px;border:0.5px solid var(--color-border-primary);border-radius:var(--border-radius-lg);overflow:hidden}
+.section-head{padding:10px 16px;font-size:14px;font-weight:500;background:var(--color-background-secondary);border-bottom:0.5px solid var(--color-border-primary)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{padding:8px 16px;text-align:left;font-weight:500;font-size:11px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.05em;background:var(--color-background-tertiary);border-bottom:0.5px solid var(--color-border-primary)}
+th.before{background:#FCEBEB;color:#A32D2D}
+th.after{background:#EAF3DE;color:#3B6D11}
+td{padding:8px 16px;border-bottom:0.5px solid var(--color-border-tertiary);vertical-align:top;line-height:1.55}
+tr:last-child td{border-bottom:none}
+.dim{color:var(--color-text-secondary);font-size:11.5px}
+td.before{background:#FCEBEB22}
+td.after{background:#EAF3DE22}
+.tag-bad{display:inline-block;font-size:10px;font-weight:500;padding:1px 6px;border-radius:4px;background:#FCEBEB;color:#A32D2D;margin-left:4px}
+.tag-good{display:inline-block;font-size:10px;font-weight:500;padding:1px 6px;border-radius:4px;background:#EAF3DE;color:#3B6D11;margin-left:4px}
+.tag-note{display:inline-block;font-size:10px;font-weight:500;padding:1px 6px;border-radius:4px;background:#FAEEDA;color:#633806;margin-left:4px}
+code{font-family:var(--font-mono);font-size:11.5px;background:var(--color-background-secondary);padding:1px 5px;border-radius:4px}
+.row-label{font-weight:500;width:22%}
+</style>
+
+<div class="wrap">
+
+<div class="section">
+  <div class="section-head">Clustering study</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22%">Dimension</th>
+        <th class="before" style="width:39%">Before</th>
+        <th class="after" style="width:39%">After</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="row-label">Synthesis methods</td>
+        <td class="before"><code>cart</code> only<span class="tag-bad">no comparison</span><div class="dim" style="margin-top:4px">Cannot compare methods — single method is a characterisation, not a study</div></td>
+        <td class="after"><code>cart</code> + <code>norm</code><span class="tag-good">2-method comparison</span><div class="dim" style="margin-top:4px">Matches regression arm. All variables are continuous so norm is valid without any workaround</div></td>
+      </tr>
+      <tr>
+        <td class="row-label">Clustering algorithms</td>
+        <td class="before"><code>k-means</code> + <code>hierarchical</code><div class="dim" style="margin-top:4px">Already correct</div></td>
+        <td class="after"><code>k-means</code> + <code>hierarchical</code><div class="dim" style="margin-top:4px">No change needed</div></td>
+      </tr>
+      <tr>
+        <td class="row-label">k selection method</td>
+        <td class="before">Silhouette on SD — selects k̂, then evaluates quality with silhouette again<span class="tag-bad">circular</span></td>
+        <td class="after">Silhouette for k̂ selection; ARI against ground-truth <code>group</code> column for quality<span class="tag-good">non-circular</span><div class="dim" style="margin-top:4px">group column exists in every OD/SD file but is currently unused</div></td>
+      </tr>
+      <tr>
+        <td class="row-label">Separation=0.1</td>
+        <td class="before">Treated as a regular scenario<span class="tag-bad">degenerate</span><div class="dim" style="margin-top:4px">Complete overlap — neither algorithm can succeed regardless of synthesis quality</div></td>
+        <td class="after">Retained as explicit null baseline<span class="tag-note">label clearly</span><div class="dim" style="margin-top:4px">Report separately as "degenerate regime" — do not mix into main success rate analysis</div></td>
+      </tr>
+      <tr>
+        <td class="row-label">Failure handling</td>
+        <td class="before"><code>calculate_quality_metrics</code> returns <code>(0.0, 0.0)</code> on exception — silently looks like valid data</td>
+        <td class="after">Return <code>NaN</code> on exception + track <code>fit_status</code> column, mirroring regression pipeline</td>
+      </tr>
+      <tr>
+        <td class="row-label">m (SD reps)</td>
+        <td class="before"><code>m=100</code><span class="tag-bad">asymmetric</span><div class="dim" style="margin-top:4px">20× more SD replicates than regression arm (M=20)</div></td>
+        <td class="after"><code>m=10</code> or <code>m=20</code><span class="tag-good">aligned</span><div class="dim" style="margin-top:4px">Symmetric with regression for comparability across studies</div></td>
+      </tr>
+      <tr>
+        <td class="row-label">Scenarios</td>
+        <td class="before">144 scenarios × 1 method × 5 reps × 100 SD = 72,000 datasets</td>
+        <td class="after">144 scenarios × 2 methods × 5 reps × 10 SD = 14,400 datasets<div class="dim" style="margin-top:4px">Smaller, cleaner, comparable</div></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <div class="section-head">Regression study</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22%">Dimension</th>
+        <th class="before" style="width:39%">Before</th>
+        <th class="after" style="width:39%">After (Jordi's 2×2 design)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="row-label">Synthesis methods</td>
+        <td class="before"><code>cart</code> <code>norm</code> <code>pmm</code> — flat, uniform application to all columns<span class="tag-bad">methodological mismatch</span></td>
+        <td class="after">4 combinations: numeric method × categorical method<span class="tag-good">factorial</span><div class="dim" style="margin-top:4px"><code>cart/cart</code> · <code>cart/logreg</code> · <code>norm/cart</code> · <code>norm/logreg</code></div></td>
+      </tr>
+      <tr>
+        <td class="row-label">PMM</td>
+        <td class="before"><code>pmm</code> included as a standalone method<div class="dim" style="margin-top:4px">Adds little over norm in results, same class of method</div></td>
+        <td class="after">Dropped<span class="tag-note">scope reduction</span><div class="dim" style="margin-top:4px">norm represents the continuous-synthesis family; pmm is redundant</div></td>
+      </tr>
+      <tr>
+        <td class="row-label">Binary y synthesis (logistic)</td>
+        <td class="before">norm/pmm produce continuous ŷ → hard quantile threshold → binary<span class="tag-bad">engineers separation</span></td>
+        <td class="after">y column overridden to <code>logreg</code> for norm/pmm; y converted to factor before synthesis<span class="tag-good">Bernoulli draw, no threshold</span></td>
+      </tr>
+      <tr>
+        <td class="row-label">Binary X synthesis</td>
+        <td class="before">norm/pmm synthesise continuous X → quantile threshold → binary<span class="tag-bad">workaround</span></td>
+        <td class="after">X columns overridden to <code>logreg</code> or <code>cart</code> per combination — native binary synthesis, no threshold</td>
+      </tr>
+      <tr>
+        <td class="row-label">Regression types</td>
+        <td class="before">Linear + logistic — already correct</td>
+        <td class="after">Linear + logistic — no change</td>
+      </tr>
+      <tr>
+        <td class="row-label">sigma_2 for logistic</td>
+        <td class="before">sigma_2 grid applied to logistic scenarios — parameter has no meaning in logistic DGP<span class="tag-bad">confounding</span></td>
+        <td class="after">sigma_2 excluded from logistic grid — logistic DGP has no free noise variance<span class="tag-good">cleaner design</span></td>
+      </tr>
+      <tr>
+        <td class="row-label">Survivorship bias</td>
+        <td class="before">All downstream metrics computed on <code>fit_status == ok</code> rows only — not disclosed</td>
+        <td class="after">Failure rate reported as primary result; downstream metrics conditioned on ok rows with explicit disclosure</td>
+      </tr>
+      <tr>
+        <td class="row-label">Scenarios</td>
+        <td class="before">2N × 3p × 2var × 3rho × 3sig × 3methods × 2reg = 648 scenarios</td>
+        <td class="after">2N × 3p × 2var × 3rho × 4combos × 2reg = 288 scenarios (sigma_2 collapsed for logistic)<div class="dim" style="margin-top:4px">Fewer scenarios, cleaner factorial structure</div></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</div>
