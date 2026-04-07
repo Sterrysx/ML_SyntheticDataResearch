@@ -47,7 +47,7 @@ base_seed    <- config$simulation$random_seed_base
 M            <- config$simulation$M
 
 rho_vals     <- config$parameters$rho
-sigma_2_vals <- config$parameters$linear$sigma_2
+sigma_2_vals <- config$parameters$sigma_2
 p1_vals      <- config$parameters$p1
 beta_full    <- config$parameters$beta   
 
@@ -136,7 +136,7 @@ if (nrow(bin_combos) > 0L) {
       ), type = "output"
     ))
     bin_cache[[key]] <- bin_obj
-    cat(sprintf("  [cache] %s -> OK\n", key))
+    cat(sprintf("  [cache] %d/%d  p=%-2d  rho=%.1f  p1=%.2f -> OK\n", i, nrow(bin_combos), pp, rrho, pp1))
   }
 }
 
@@ -257,12 +257,9 @@ worker_code <- c(
   "        }",
   "        ",
   "        X_design <- cbind(1, X)",
-  "        beta_raw  <- current_beta[-1]",
-  "        lp_var    <- as.numeric(t(beta_raw) %*% Sigma %*% beta_raw)",
-  "        beta_norm <- c(current_beta[1], beta_raw / sqrt(lp_var))",
   "        ",
   "        epsilon <- rnorm(task$N_cur, mean = 0, sd = sqrt(task$sig2_cur))",
-  "        y       <- as.numeric(X_design %*% beta_norm + epsilon)",
+  "        y       <- as.numeric(X_design %*% current_beta + epsilon)",
   "        ",
   "        df           <- as.data.frame(X)",
   "        colnames(df) <- paste0('X', seq_len(task$p_cur))",

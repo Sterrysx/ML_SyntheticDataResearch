@@ -115,14 +115,14 @@ fi
 EXPECTED_LINEAR_CONTINUOUS=$(python3 -c "
 import json; c=json.load(open('config/config.json'))
 if 'continuous' in c['simulation']['var_type']:
-    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['linear']['sigma_2']))
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']))
 else:
     print(0)
 ")
 EXPECTED_LINEAR_BINARY=$(python3 -c "
 import json; c=json.load(open('config/config.json'))
 if 'binary' in c['simulation']['var_type']:
-    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['linear']['sigma_2']) * len(c['parameters']['p1']))
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']) * len(c['parameters']['p1']))
 else:
     print(0)
 ")
@@ -130,14 +130,14 @@ EXPECTED_OD_LINEAR=$((EXPECTED_LINEAR_CONTINUOUS + EXPECTED_LINEAR_BINARY))
 EXPECTED_LOGISTIC_CONTINUOUS=$(python3 -c "
 import json; c=json.load(open('config/config.json'))
 if 'continuous' in c['simulation']['var_type']:
-    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['logistic']['gamma']))
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']))
 else:
     print(0)
 ")
 EXPECTED_LOGISTIC_BINARY=$(python3 -c "
 import json; c=json.load(open('config/config.json'))
 if 'binary' in c['simulation']['var_type']:
-    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['logistic']['gamma']) * len(c['parameters']['p1']))
+    print(len(c['simulation']['N']) * len(c['simulation']['p']) * len(c['parameters']['rho']) * len(c['parameters']['sigma_2']) * len(c['parameters']['p1']))
 else:
     print(0)
 ")
@@ -157,12 +157,12 @@ cd 01_generate_OD
 
 EXISTING_OD_LINEAR=$(ls -1 ../data/original/OD_linear_*.parquet 2>/dev/null | wc -l)
 
-if [ "$EXISTING_OD_LINEAR" -ge "$EXPECTED_OD_PER_BRANCH" ]; then
-    log_success "All $EXPECTED_OD_PER_BRANCH linear OD file(s) already exist — skipping Step 1a."
+if [ "$EXISTING_OD_LINEAR" -ge "$EXPECTED_OD_LINEAR" ]; then
+    log_success "All $EXPECTED_OD_LINEAR linear OD file(s) already exist — skipping Step 1a."
     OD_LINEAR_COUNT=$EXISTING_OD_LINEAR
 else
     if [ "$EXISTING_OD_LINEAR" -gt 0 ]; then
-        log_info "Resuming linear OD generation: $EXISTING_OD_LINEAR / $EXPECTED_OD_PER_BRANCH already complete."
+        log_info "Resuming linear OD generation: $EXISTING_OD_LINEAR / $EXPECTED_OD_LINEAR already complete."
     fi
     START_TIME=$(date +%s)
 
@@ -199,12 +199,12 @@ echo ""
 
 EXISTING_OD_LOGISTIC=$(ls -1 ../data/original/OD_logistic_*.parquet 2>/dev/null | wc -l)
 
-if [ "$EXISTING_OD_LOGISTIC" -ge "$EXPECTED_OD_PER_BRANCH" ]; then
-    log_success "All $EXPECTED_OD_PER_BRANCH logistic OD file(s) already exist — skipping Step 1b."
+if [ "$EXISTING_OD_LOGISTIC" -ge "$EXPECTED_OD_LOGISTIC" ]; then
+    log_success "All $EXPECTED_OD_LOGISTIC logistic OD file(s) already exist — skipping Step 1b."
     OD_LOGISTIC_COUNT=$EXISTING_OD_LOGISTIC
 else
     if [ "$EXISTING_OD_LOGISTIC" -gt 0 ]; then
-        log_info "Resuming logistic OD generation: $EXISTING_OD_LOGISTIC / $EXPECTED_OD_PER_BRANCH already complete."
+        log_info "Resuming logistic OD generation: $EXISTING_OD_LOGISTIC / $EXPECTED_OD_LOGISTIC already complete."
     fi
     START_TIME=$(date +%s)
 
@@ -239,11 +239,15 @@ echo ""
 # ==============================================================================
 # STEP 2: Generate Synthetic Data for ALL OD files (R)
 # ==============================================================================
-EXPECTED_SD=$((OD_COUNT * NUM_METHODS))
+# Case A (linear+cont): 2 arms; Case C (linear+bin): 4 arms
+# Case D (logistic+cont): 4 arms; Case B (logistic+bin): 2 arms
+EXPECTED_SD_LINEAR=$((EXPECTED_LINEAR_CONTINUOUS * 2 + EXPECTED_LINEAR_BINARY * 4))
+EXPECTED_SD_LOGISTIC=$((EXPECTED_LOGISTIC_CONTINUOUS * 4 + EXPECTED_LOGISTIC_BINARY * 2))
+EXPECTED_SD=$((EXPECTED_SD_LINEAR + EXPECTED_SD_LOGISTIC))
 EXISTING_SD=$(ls -1 data/synthetic/SD_*.parquet 2>/dev/null | wc -l)
 
-log_info "STEP 2: Generating Synthetic Data (SD) via ${METHOD_NAMES} ..."
-log_info "  OD total: ${OD_COUNT} (${OD_LINEAR_COUNT} linear + ${OD_LOGISTIC_COUNT} logistic) x ${NUM_METHODS} methods = ${EXPECTED_SD} SD files"
+log_info "STEP 2: Generating Synthetic Data (SD) [cont: ${CONT_METHODS}, bin: ${BIN_METHODS}] ..."
+log_info "  OD total: ${OD_COUNT} (${OD_LINEAR_COUNT} linear + ${OD_LOGISTIC_COUNT} logistic) -> ${EXPECTED_SD} SD files expected"
 echo ""
 
 if [ "$EXISTING_SD" -ge "$EXPECTED_SD" ]; then

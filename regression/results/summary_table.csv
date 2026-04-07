@@ -1,13 +1,13 @@
-reg_type,method,var_type,sig_agree_%,ci_overlap_%,ci_width_ratio,coef_eucl_dist,adj R² gap,fail_od_%,fail_sd_%,pseudo-R² gap
-linear,CART,binary,81.8,61.0,1.088,0.9757,-0.0525,0.0,0.0,
-linear,CART,continuous,81.2,37.1,1.505,1.0625,-0.2708,0.0,0.0,
-linear,NORM,binary,70.5,55.1,5609755100915.054,1411485486424.9849,-0.1441,0.0,0.0,
-linear,NORM,continuous,99.0,71.2,1.026,0.305,0.005,0.0,0.0,
-linear,PMM,binary,64.7,46.4,10207692919056.566,2150134477720.389,-0.1636,0.0,0.0,
-linear,PMM,continuous,99.0,69.7,1.041,0.3177,-0.0058,0.0,0.0,
-logistic,CART,binary,77.5,68.0,1.086,1.3488,,0.09,3.06,0.0353
-logistic,CART,continuous,76.8,54.8,1.026,1.0558,,0.0,0.0,-0.037
-logistic,NORM,binary,57.0,66.7,2236707.885,0.4967,,0.09,55.83,0.0031
-logistic,NORM,continuous,84.5,70.2,1.096,0.8209,,0.0,0.0,0.0353
-logistic,PMM,binary,48.4,67.7,2929848.401,0.2505,,0.09,74.72,0.0179
-logistic,PMM,continuous,84.7,70.5,1.117,0.7964,,0.0,0.0,0.0265
+reg_type,arm,var_type,sig_agree_%,ci_overlap_%,ci_width_ratio,coef_eucl_dist,adj_R2_gap,fail_od_%,fail_sd_%,pseudoR2_gap
+linear,XCART_YCART,binary,87.0,57.6,1.13,0.8475,-0.0735,0.0,0.0,
+linear,XCART_YNORM,binary,95.3,71.1,1.026,0.4672,0.0118,0.0,0.0,
+linear,XLOGREG_YCART,binary,86.6,57.5,1.135,0.8604,-0.0837,0.0,0.0,
+linear,XLOGREG_YNORM,binary,95.3,71.1,1.028,0.468,0.0069,0.0,0.0,
+linear,XCART_YCART,continuous,86.2,33.8,1.689,0.9874,-0.2908,0.0,0.0,
+linear,XNORM_YNORM,continuous,99.7,71.2,1.016,0.2293,0.0023,0.0,0.0,
+logistic,XCART_YCART,binary,80.0,67.5,1.463,1.2815,,0.11,1.75,0.0176
+logistic,XLOGREG_YLOGREG,binary,82.8,70.9,1.406,1.1374,,0.11,1.91,0.0268
+logistic,XCART_YCART,continuous,79.7,48.7,0.959,1.1975,,0.0,0.0,-0.0821
+logistic,XCART_YLOGREG,continuous,90.3,70.7,1.094,0.7881,,0.0,0.08,0.0177
+logistic,XNORM_YCART,continuous,78.5,46.4,0.912,1.2017,,0.0,0.0,-0.0991
+logistic,XNORM_YLOGREG,continuous,90.5,70.5,1.078,0.7915,,0.0,0.13,0.023

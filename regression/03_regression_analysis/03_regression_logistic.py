@@ -144,9 +144,9 @@ result_dir = os.path.join("..", "results")
 os.makedirs(result_dir, exist_ok=True)
 
 _OD_RE = re.compile(
-    r"OD_logistic_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_gam([\d.]+)_p1[\w.]+")
+    r"OD_logistic_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
 _SD_RE = re.compile(
-    r"SD_X(\w+?)_Y(\w+?)_logistic_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_gam([\d.]+)_p1[\w.]+")
+    r"SD_X(\w+?)_Y(\w+?)_logistic_(binary|continuous)_N(\d+)_p(\d+)_rho([\d.]+)_sig([\d.]+|NA)_p1[\w.]+")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _pad(arr, length=MAX_P + 1):
@@ -235,7 +235,7 @@ for fp in sd_files:
         "N":        int(m.group(4)),
         "p":        int(m.group(5)),
         "rho":      float(m.group(6)),
-        "gam_str":  m.group(7),
+        "sig_str":  m.group(7),
         "od_key":   od_key,
         "od_fp":    od_map[od_key],
     })
@@ -312,8 +312,8 @@ def _process_one_sd(task):
     N        = task["N"]
     p_val    = task["p"]
     rho      = task["rho"]
-    gam_str  = task["gam_str"]
-    gamma_out = float(gam_str)
+    sig_str  = task["sig_str"]
+    sigma_out = _np.nan if sig_str == "NA" else float(sig_str)
     x_cols   = [f"X{i}" for i in range(1, p_val + 1)]
 
     od_df = _pd.read_parquet(od_fp)
@@ -340,7 +340,7 @@ def _process_one_sd(task):
         row = {
             "x_method": x_method, "y_method": y_method, "var_type": var_type,
             "N": N, "p": p_val, "rho": rho,
-            "gamma": gamma_out, "iter": int(it),
+            "sigma_2": sigma_out, "iter": int(it),
             "fit_status_od": status_od, "fit_status_sd": status_sd,
             "pseudo_r2_od": r2_od, "pseudo_r2_sd": r2_sd,
             "accuracy_od": acc_od, "accuracy_sd": acc_sd,
