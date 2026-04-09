@@ -19,6 +19,10 @@ regression/results/aggregated_model_metrics.parquet
 
 regression/results/evaluation_metrics.parquet
 regression/results/figures/
+regression/results/**
+!regression/results/.gitkeep
+!regression/results/**/.gitkeep
+regression/.codex
 
 # Keep the directory structure intact (optional but recommended)
 !regression/data/original/.gitkeep
