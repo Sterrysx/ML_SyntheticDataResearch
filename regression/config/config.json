@@ -1,19 +1,58 @@
 {
   "simulation": {
-    "N": [100, 500, 1000],
-    "p": [2, 5, 10],
-    "var_type": ["continuous", "binary"],
+    "N": [
+      100,
+      500,
+      1000
+    ],
+    "p": [
+      2,
+      5,
+      10
+    ],
+    "var_type": [
+      "continuous",
+      "binary"
+    ],
     "random_seed_base": 16,
-    "M": 250
+    "M": 1000
   },
   "parameters": {
-    "rho": [0.0, 0.3, 0.6],
-    "sigma_2": [0.5, 1.0, 2.0],
-    "p1": [0.5],
-    "beta": [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1]
+    "rho": [
+      0.0,
+      0.3,
+      0.6
+    ],
+    "sigma_2": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "p1": [
+      0.5
+    ],
+    "beta": [
+      1,
+      -1,
+      1,
+      -1,
+      1,
+      -1,
+      1,
+      -1,
+      1,
+      -1,
+      1
+    ]
   },
   "synthesis": {
-    "continuous_methods": ["cart", "norm"],
-    "binary_methods": ["cart", "logreg"]
+    "continuous_methods": [
+      "cart",
+      "norm"
+    ],
+    "binary_methods": [
+      "cart",
+      "logreg"
+    ]
   }
 }
