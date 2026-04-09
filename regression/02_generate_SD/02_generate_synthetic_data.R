@@ -36,6 +36,16 @@ if (!file.exists(config_path)) {
 config       <- fromJSON(config_path)
 cont_methods <- config$synthesis$continuous_methods
 bin_methods  <- config$synthesis$binary_methods
+MAX_ACCEPT_ATTEMPTS <- 1000L
+VALIDATE_BATCH_SIZE <- 4L
+timing_summary_path <- normalizePath(file.path("..", "results", "latest_sd_timing_breakdown.json"),
+                                     winslash = "/", mustWork = FALSE)
+python_bin <- Sys.which("python3")
+if (python_bin == "") {
+  stop("python3 not found on PATH")
+}
+validator_py <- normalizePath(file.path("..", "03_regression_analysis", "logit_acceptance.py"),
+                              winslash = "/", mustWork = TRUE)
 
 cat(sprintf("[INFO] Continuous methods: %s\n", paste(cont_methods, collapse = ", ")))
 cat(sprintf("[INFO] Binary methods: %s\n", paste(bin_methods, collapse = ", ")))
@@ -94,10 +104,19 @@ for (od_path in shuffled_od_files) {
   od_name <- basename(od_path)
   arms    <- get_arms(od_name, cont_methods, bin_methods)
   for (arm_idx in seq_len(nrow(arms))) {
+    scenario_type <- if (grepl("logistic", od_name)) {
+      if (grepl("_binary_", od_name)) "logistic_bin" else "logistic_cont"
+    } else {
+      if (grepl("_binary_", od_name)) "linear_bin" else "linear_cont"
+    }
     task_data <- list(
       file     = od_path,
       x_method = arms$x_method[arm_idx],
-      y_method = arms$y_method[arm_idx]
+      y_method = arms$y_method[arm_idx],
+      seed     = as.integer(config$simulation$random_seed_base + task_i * 100000L),
+      max_accept_attempts = MAX_ACCEPT_ATTEMPTS,
+      validate_batch_size = VALIDATE_BATCH_SIZE,
+      scenario_type = scenario_type
     )
     saveRDS(task_data, file.path(todo_dir, sprintf("task_%05d.rds", task_i)))
     task_i <- task_i + 1L
@@ -116,6 +135,8 @@ worker_code <- c(
   "result_file <- args[2]",
   "todo_dir <- args[3]",
   "doing_dir <- args[4]",
+  "python_bin <- args[5]",
+  "validator_py <- args[6]",
   "",
   "Sys.setenv(OMP_NUM_THREADS = '1')",
   "Sys.setenv(OPENBLAS_NUM_THREADS = '1')",
@@ -136,6 +157,17 @@ worker_code <- c(
   "results <- list()",
   "writeLines('READY', progress_file)",
   "",
+  "validate_candidates <- function(frame) {",
+  "  parquet_path <- tempfile(pattern = 'sd_logit_validate_', fileext = '.parquet')",
+  "  json_path    <- tempfile(pattern = 'sd_logit_validate_', fileext = '.json')",
+  "  on.exit(unlink(c(parquet_path, json_path), force = TRUE), add = TRUE)",
+  "  write_parquet(frame, parquet_path)",
+  "  status <- system2(python_bin, args = c(validator_py, '--input', parquet_path, '--output', json_path), stdout = FALSE, stderr = FALSE)",
+  "  if (!identical(status, 0L) || !file.exists(json_path)) stop('Logit validator failed')",
+  "  out <- fromJSON(json_path)",
+  "  as.data.frame(out, stringsAsFactors = FALSE)",
+  "}",
+  "",
   "# WORK STEALING LOOP: Atomically claim files from todo_dir",
   "repeat {",
   "  available_tasks <- list.files(todo_dir, full.names = TRUE)",
@@ -146,8 +178,9 @@ worker_code <- c(
   "",
   "  # file.rename is an OS-level ATOMIC operation.",
   "  # If it returns TRUE, this core successfully claimed the file.",
-  "  if (file.rename(target_task, claimed_task)) {",
+  "  if (suppressWarnings(file.rename(target_task, claimed_task))) {",
   "    task <- readRDS(claimed_task)",
+  "    task_start <- proc.time()[[3]]",
   "    od_path <- task$file",
   "    od_name <- basename(od_path)",
   "",
@@ -159,7 +192,8 @@ worker_code <- c(
   "    # SKIP if output already exists (resume support)",
   "    out_path <- file.path(output_dir, paste0(sd_name, '.parquet'))",
   "    if (file.exists(out_path)) {",
-  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, x_method = task$x_method, y_method = task$y_method)",
+  "      task_elapsed <- proc.time()[[3]] - task_start",
+  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, x_method = task$x_method, y_method = task$y_method, scenario_type = task$scenario_type, elapsed_s = task_elapsed)",
   "      file.remove(claimed_task)",
   "      next",
   "    }",
@@ -176,12 +210,11 @@ worker_code <- c(
   "",
   "      iters <- sort(unique(od_full$iter))",
   "      sd_list <- list()",
+  "      total_attempts <- 0L",
   "",
   "      for (it in iters) {",
   "        od <- od_full[od_full$iter == it, ]",
   "        od$iter <- NULL",
-  "",
-  "        syn_seed <- base_seed + (global_idx * 1000L) + it",
   "",
   "        # Build per-column method vector",
   "        method_vec <- setNames(rep(task$x_method, ncol(od)), names(od))",
@@ -197,31 +230,76 @@ worker_code <- c(
   "          }",
   "        }",
   "",
-  "        invisible(capture.output({",
-  "          syn_obj <- suppressMessages(suppressWarnings(",
-  "            syn(od, method = method_vec, seed = syn_seed, print.flag = FALSE, proper = TRUE)",
-  "          ))",
-  "        }))",
-  "        sd <- syn_obj$syn",
-  "",
-  "        # Reverse type conversions",
-  "        if (y_is_binary && task$y_method == 'logreg') {",
-  "          sd$y <- as.numeric(as.character(sd$y))",
+  "        if (y_is_binary) {",
+  "          accepted_sd <- NULL",
+  "          attempt_n   <- 0L",
+  "          generated_n <- 0L",
+  "          while (is.null(accepted_sd)) {",
+  "            if (attempt_n >= task$max_accept_attempts) {",
+  "              stop(sprintf('Reached max attempts (%d) for SD iter %s in %s', task$max_accept_attempts, it, sd_name))",
+  "            }",
+  "            batch_n <- min(task$validate_batch_size, task$max_accept_attempts - attempt_n)",
+  "            batch_list <- vector('list', batch_n)",
+  "            for (b in seq_len(batch_n)) {",
+  "              generated_n <- generated_n + 1L",
+  "              syn_seed <- ((task$seed + (global_idx * 1000L) + (as.integer(it) * 100L) + generated_n - 2L) %% (.Machine$integer.max - 1L)) + 1L",
+  "              invisible(capture.output({",
+  "                syn_obj <- suppressMessages(suppressWarnings(",
+  "                  syn(od, method = method_vec, seed = syn_seed, print.flag = FALSE, proper = TRUE)",
+  "                ))",
+  "              }))",
+  "              sd <- syn_obj$syn",
+  "              if (task$y_method == 'logreg') {",
+  "                sd$y <- as.numeric(as.character(sd$y))",
+  "              }",
+  "              if (x_is_binary && task$x_method %in% c('cart', 'logreg')) {",
+  "                for (col in x_cols) sd[[col]] <- as.numeric(as.character(sd[[col]]))",
+  "              }",
+  "              sd$iter <- as.integer(b)",
+  "              batch_list[[b]] <- sd",
+  "            }",
+  "            batch_frame <- do.call(rbind, batch_list)",
+  "            statuses <- validate_candidates(batch_frame)",
+  "            accepted_iters <- statuses$iter[statuses$accepted]",
+  "            if (length(accepted_iters) > 0L) {",
+  "              first_accept <- accepted_iters[1]",
+  "              attempt_n <- attempt_n + first_accept",
+  "              accepted_sd <- batch_list[[first_accept]]",
+  "              accepted_sd$iter <- it",
+  "            } else {",
+  "              attempt_n <- attempt_n + batch_n",
+  "            }",
+  "          }",
+  "          total_attempts <- total_attempts + attempt_n",
+  "          sd_list[[length(sd_list) + 1L]] <- accepted_sd",
+  "        } else {",
+  "          syn_seed <- base_seed + (global_idx * 1000L) + it",
+  "          invisible(capture.output({",
+  "            syn_obj <- suppressMessages(suppressWarnings(",
+  "              syn(od, method = method_vec, seed = syn_seed, print.flag = FALSE, proper = TRUE)",
+  "            ))",
+  "          }))",
+  "          sd <- syn_obj$syn",
+  "          if (x_is_binary && task$x_method %in% c('cart', 'logreg')) {",
+  "            for (col in x_cols) sd[[col]] <- as.numeric(as.character(sd[[col]]))",
+  "          }",
+  "          sd$iter <- it",
+  "          sd_list[[length(sd_list) + 1L]] <- sd",
   "        }",
-  "        if (x_is_binary && task$x_method %in% c('cart', 'logreg')) {",
-  "          for (col in x_cols) sd[[col]] <- as.numeric(as.character(sd[[col]]))",
-  "        }",
-  "",
-  "        sd$iter <- it",
-  "        sd_list[[length(sd_list) + 1L]] <- sd",
   "      }",
   "",
   "      combined_sd <- do.call(rbind, sd_list)",
+  "      if (y_is_binary) {",
+  "        combined_sd$attempt_total_sd <- as.integer(total_attempts)",
+  "        combined_sd$target_success_sd <- as.integer(length(iters))",
+  "      }",
   "      write_parquet(combined_sd, file.path(output_dir, paste0(sd_name, '.parquet')))",
   "",
-  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, x_method = task$x_method, y_method = task$y_method)",
+  "      task_elapsed <- proc.time()[[3]] - task_start",
+  "      results[[length(results) + 1L]] <- list(status = 'ok', file = sd_name, x_method = task$x_method, y_method = task$y_method, scenario_type = task$scenario_type, attempts = total_attempts, elapsed_s = task_elapsed)",
   "    }, error = function(e) {",
-  "      results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = od_name, x_method = task$x_method, y_method = task$y_method)",
+  "      task_elapsed <- proc.time()[[3]] - task_start",
+  "      results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = od_name, x_method = task$x_method, y_method = task$y_method, scenario_type = task$scenario_type, elapsed_s = task_elapsed)",
   "    })",
   "",
   "    # Delete the task file now that we are done with it",
@@ -246,7 +324,7 @@ for (i in seq_len(NUM_CORES)) {
   writeLines("STARTING", progress_files[i])
   if (file.exists(result_files[i])) file.remove(result_files[i])
   
-  system2("Rscript", args = c(worker_script, progress_files[i], result_files[i], todo_dir, doing_dir), wait = FALSE)
+  system2("Rscript", args = c(worker_script, progress_files[i], result_files[i], todo_dir, doing_dir, python_bin, validator_py), wait = FALSE)
 }
 
 # 7. Live Unified Progress Display
@@ -318,6 +396,7 @@ repeat {
 count  <- 0L
 errors <- 0L
 warns  <- character(0)
+timing_breakdown <- c(linear_cont = 0, linear_bin = 0, logistic_cont = 0, logistic_bin = 0)
 
 for (i in seq_len(NUM_CORES)) {
   res_file <- result_files[i]
@@ -330,6 +409,9 @@ for (i in seq_len(NUM_CORES)) {
   
   task_results <- readRDS(res_file)
   for (r in task_results) {
+    if (!is.null(r$scenario_type) && !is.null(r$elapsed_s) && r$scenario_type %in% names(timing_breakdown)) {
+      timing_breakdown[[r$scenario_type]] <- timing_breakdown[[r$scenario_type]] + as.numeric(r$elapsed_s)
+    }
     if (r$status == "ok") {
       count <- count + 1L
     } else {
@@ -342,5 +424,38 @@ for (i in seq_len(NUM_CORES)) {
 if (length(warns) > 0L) cat("\n", paste(warns, collapse = "\n"), "\n", sep = "")
 
 elapsed_total <- proc.time()[[3]] - start_ts
+total_worker_elapsed <- sum(timing_breakdown)
+if (total_worker_elapsed > 0) {
+  timing_breakdown_scaled <- timing_breakdown / total_worker_elapsed * elapsed_total
+} else {
+  timing_breakdown_scaled <- timing_breakdown
+}
+write(
+  "",
+  file = timing_summary_path
+)
+writeLines(
+  toJSON(
+    list(
+      total_wall_s = unname(elapsed_total),
+      total_worker_s = unname(total_worker_elapsed),
+      scaled_wall_s = list(
+        linear_cont = unname(timing_breakdown_scaled[["linear_cont"]]),
+        linear_bin = unname(timing_breakdown_scaled[["linear_bin"]]),
+        logistic_cont = unname(timing_breakdown_scaled[["logistic_cont"]]),
+        logistic_bin = unname(timing_breakdown_scaled[["logistic_bin"]])
+      ),
+      raw_worker_s = list(
+        linear_cont = unname(timing_breakdown[["linear_cont"]]),
+        linear_bin = unname(timing_breakdown[["linear_bin"]]),
+        logistic_cont = unname(timing_breakdown[["logistic_cont"]]),
+        logistic_bin = unname(timing_breakdown[["logistic_bin"]])
+      )
+    ),
+    auto_unbox = TRUE,
+    pretty = TRUE
+  ),
+  con = timing_summary_path
+)
 cat(sprintf("\n[DONE] %d file(s) written, %d errors.  Wall time: %.0fs\n",
             count, errors, elapsed_total))

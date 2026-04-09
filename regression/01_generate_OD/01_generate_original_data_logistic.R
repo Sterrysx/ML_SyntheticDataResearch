@@ -45,6 +45,8 @@ p_vals       <- config$simulation$p
 var_types    <- config$simulation$var_type
 base_seed    <- config$simulation$random_seed_base
 M            <- config$simulation$M
+MAX_ACCEPT_ATTEMPTS <- 5000L
+VALIDATE_BATCH_SIZE <- 25L
 
 rho_vals     <- config$parameters$rho
 sigma_2_vals <- config$parameters$sigma_2
@@ -143,6 +145,12 @@ if (nrow(bin_combos) > 0L) {
 # Save cache so background workers can load it natively
 cache_file <- file.path(tempdir(), "od_logistic_bin_cache.rds")
 saveRDS(bin_cache, cache_file)
+python_bin <- Sys.which("python3")
+if (python_bin == "") {
+  stop("python3 not found on PATH")
+}
+validator_py <- normalizePath(file.path("..", "03_regression_analysis", "logit_acceptance.py"),
+                              winslash = "/", mustWork = TRUE)
 cat("\n")
 
 # 6. Build Atomic Task Queue
@@ -173,6 +181,8 @@ for (i in seq_len(n_scenarios)) {
     p1_cur       = row$p1,
     seed         = row$scenario_seed,
     M            = M,
+    max_accept_attempts = MAX_ACCEPT_ATTEMPTS,
+    validate_batch_size = VALIDATE_BATCH_SIZE,
     beta_full    = beta_full
   )
   saveRDS(task_data, file.path(todo_dir, sprintf("task_%05d.rds", i)))
@@ -190,12 +200,15 @@ worker_code <- c(
   "todo_dir <- args[3]",
   "doing_dir <- args[4]",
   "cache_file <- args[5]",
+  "python_bin <- args[6]",
+  "validator_py <- args[7]",
   "",
   "Sys.setenv(OMP_NUM_THREADS = '1')",
   "Sys.setenv(OPENBLAS_NUM_THREADS = '1')",
   "Sys.setenv(MKL_NUM_THREADS = '1')",
   "",
   "suppressWarnings(suppressPackageStartupMessages({",
+  "  library(jsonlite)",
   "  library(mvtnorm)",
   "  library(MultiDiscreteRNG)",
   "  library(arrow)",
@@ -209,6 +222,16 @@ worker_code <- c(
   "writeLines('READY', progress_file)",
   "",
   "make_sigma_mat <- function(p, rho) { S <- matrix(rho, nrow = p, ncol = p); diag(S) <- 1; S }",
+  "validate_candidates <- function(frame) {",
+  "  parquet_path <- tempfile(pattern = 'od_logit_validate_', fileext = '.parquet')",
+  "  json_path    <- tempfile(pattern = 'od_logit_validate_', fileext = '.json')",
+  "  on.exit(unlink(c(parquet_path, json_path), force = TRUE), add = TRUE)",
+  "  write_parquet(frame, parquet_path)",
+  "  status <- system2(python_bin, args = c(validator_py, '--input', parquet_path, '--output', json_path), stdout = FALSE, stderr = FALSE)",
+  "  if (!identical(status, 0L) || !file.exists(json_path)) stop('Logit validator failed')",
+  "  out <- fromJSON(json_path)",
+  "  as.data.frame(out, stringsAsFactors = FALSE)",
+  "}",
   "",
   "# WORK STEALING LOOP",
   "repeat {",
@@ -218,7 +241,7 @@ worker_code <- c(
   "  target_task <- available_tasks[1]",
   "  claimed_task <- file.path(doing_dir, basename(target_task))",
   "",
-  "  if (file.rename(target_task, claimed_task)) {",
+  "  if (suppressWarnings(file.rename(target_task, claimed_task))) {",
   "    task <- readRDS(claimed_task)",
   "",
   "    # SKIP if output already exists (resume support)",
@@ -232,45 +255,66 @@ worker_code <- c(
   "    writeLines(paste('OD |', sub('^OD_logistic_', '', task$scenario_key)), progress_file)",
   "",
   "    tryCatch({",
-  "      set.seed(task$seed)",
   "      current_beta <- task$beta_full[1:(task$p_cur + 1L)]",
   "      Sigma <- make_sigma_mat(task$p_cur, task$rho_cur)",
   "      ",
-  "      iter_list <- vector('list', task$M)",
-  "      ",
-  "      # Run all M iterations for this scenario locally",
-  "      for (m in seq_len(task$M)) {",
-  "        if (task$vtype == 'continuous') {",
-  "          X <- rmvnorm(n = task$N_cur, mean = rep(0, task$p_cur), sigma = Sigma)",
-  "        } else {",
-  "          bin_obj <- bin_cache[[paste(task$p_cur, task$rho_cur, task$p1_cur, sep = '_')]]",
-  "          X_raw <- genB(no.rows = task$N_cur, binObj = bin_obj)",
-  "          ",
-  "          # FIX: Extract just the data matrix, ignore the correlation matrix at X_raw[[2]]",
-  "          X_data <- if (is.list(X_raw) && !is.data.frame(X_raw)) X_raw[[1]] else X_raw",
-  "          ",
-  "          if (is.list(X_data) || is.data.frame(X_data)) {",
-  "            X <- matrix(as.integer(unlist(X_data, use.names = FALSE)) - 1L, nrow = task$N_cur, ncol = task$p_cur)",
+  "      accepted_list <- vector('list', task$M)",
+  "      accepted_n    <- 0L",
+  "      attempt_n     <- 0L",
+  "      bin_obj <- NULL",
+  "      if (task$vtype != 'continuous') {",
+  "        bin_obj <- bin_cache[[paste(task$p_cur, task$rho_cur, task$p1_cur, sep = '_')]]",
+  "      }",
+  "      while (accepted_n < task$M) {",
+  "        if (attempt_n >= task$max_accept_attempts) {",
+  "          stop(sprintf('Reached max attempts (%d) after %d accepted OD fits for %s', task$max_accept_attempts, accepted_n, task$scenario_key))",
+  "        }",
+  "        remaining <- task$M - accepted_n",
+  "        batch_n <- min(task$validate_batch_size, remaining, task$max_accept_attempts - attempt_n)",
+  "        batch_list <- vector('list', batch_n)",
+  "        for (b in seq_len(batch_n)) {",
+  "          attempt_n <- attempt_n + 1L",
+  "          candidate_seed <- ((task$seed + attempt_n - 2L) %% (.Machine$integer.max - 1L)) + 1L",
+  "          set.seed(candidate_seed)",
+  "          if (task$vtype == 'continuous') {",
+  "            X <- rmvnorm(n = task$N_cur, mean = rep(0, task$p_cur), sigma = Sigma)",
   "          } else {",
-  "            X <- matrix(as.numeric(X_data), nrow = task$N_cur, ncol = task$p_cur)",
+  "            X_raw <- genB(no.rows = task$N_cur, binObj = bin_obj)",
+  "            X_data <- if (is.list(X_raw) && !is.data.frame(X_raw)) X_raw[[1]] else X_raw",
+  "            if (is.list(X_data) || is.data.frame(X_data)) {",
+  "              X <- matrix(as.integer(unlist(X_data, use.names = FALSE)) - 1L, nrow = task$N_cur, ncol = task$p_cur)",
+  "            } else {",
+  "              X <- matrix(as.numeric(X_data), nrow = task$N_cur, ncol = task$p_cur)",
+  "            }",
+  "          }",
+  "          X_design <- cbind(1, X)",
+  "          epsilon <- rnorm(task$N_cur, mean = 0, sd = sqrt(task$sig2_cur))",
+  "          lp      <- as.numeric(X_design %*% current_beta + epsilon)",
+  "          prob    <- 1 / (1 + exp(-lp))",
+  "          y       <- rbinom(task$N_cur, 1, prob)",
+  "          df           <- as.data.frame(X)",
+  "          colnames(df) <- paste0('X', seq_len(task$p_cur))",
+  "          df$y         <- y",
+  "          df$iter      <- as.integer(b)",
+  "          batch_list[[b]] <- df",
+  "        }",
+  "        batch_frame <- do.call(rbind, batch_list)",
+  "        statuses <- validate_candidates(batch_frame)",
+  "        accepted_iters <- statuses$iter[statuses$accepted]",
+  "        if (length(accepted_iters) > 0L) {",
+  "          for (keep_it in accepted_iters) {",
+  "            if (accepted_n >= task$M) break",
+  "            accepted_n <- accepted_n + 1L",
+  "            kept <- batch_list[[keep_it]]",
+  "            kept$iter <- as.integer(accepted_n)",
+  "            accepted_list[[accepted_n]] <- kept",
   "          }",
   "        }",
-  "        ",
-  "        X_design <- cbind(1, X)",
-  "        epsilon <- rnorm(task$N_cur, mean = 0, sd = sqrt(task$sig2_cur))",
-  "        lp      <- as.numeric(X_design %*% current_beta + epsilon)",
-  "        prob    <- 1 / (1 + exp(-lp))",
-  "        y       <- rbinom(task$N_cur, 1, prob)",
-  "        ",
-  "        df           <- as.data.frame(X)",
-  "        colnames(df) <- paste0('X', seq_len(task$p_cur))",
-  "        df$y         <- y",
-  "        df$iter      <- as.integer(m)",
-  "        ",
-  "        iter_list[[m]] <- df",
   "      }",
   "      ",
-  "      combined <- do.call(rbind, iter_list)",
+  "      combined <- do.call(rbind, accepted_list)",
+  "      combined$attempt_total_od <- as.integer(attempt_n)",
+  "      combined$target_success_od <- as.integer(task$M)",
   "      ",
   "      write_parquet(",
   "          combined, ",
@@ -279,7 +323,7 @@ worker_code <- c(
   "          chunk_size = task$N_cur",
   "      )",
   "      ",
-  "      results[[length(results) + 1L]] <- list(status = 'ok', file = task$scenario_key)",
+  "      results[[length(results) + 1L]] <- list(status = 'ok', file = task$scenario_key, accepted = accepted_n, attempts = attempt_n)",
   "      file.remove(claimed_task)",
   "    }, error = function(e) {",
   "      results[[length(results) + 1L]] <<- list(status = 'error', message = e$message, file = task$scenario_key)",
@@ -304,7 +348,7 @@ for (i in seq_len(NUM_CORES)) {
   writeLines("STARTING", progress_files[i])
   if (file.exists(result_files[i])) file.remove(result_files[i])
   
-  system2("Rscript", args = c(worker_script, progress_files[i], result_files[i], todo_dir, doing_dir, cache_file), wait = FALSE)
+  system2("Rscript", args = c(worker_script, progress_files[i], result_files[i], todo_dir, doing_dir, cache_file, python_bin, validator_py), wait = FALSE)
 }
 
 # 9. Live Unified Progress Display

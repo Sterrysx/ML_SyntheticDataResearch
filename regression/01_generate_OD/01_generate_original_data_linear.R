@@ -218,7 +218,7 @@ worker_code <- c(
   "  target_task <- available_tasks[1]",
   "  claimed_task <- file.path(doing_dir, basename(target_task))",
   "",
-  "  if (file.rename(target_task, claimed_task)) {",
+  "  if (suppressWarnings(file.rename(target_task, claimed_task))) {",
   "    task <- readRDS(claimed_task)",
   "",
   "    # SKIP if output already exists (resume support)",

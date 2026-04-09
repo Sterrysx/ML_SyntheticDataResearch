@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
+from logit_acceptance import fit_logit_with_status
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 N_WORKERS = 18
@@ -154,46 +156,6 @@ def _pad(arr, length=MAX_P + 1):
     out[:len(arr)] = arr
     return out
 
-def _fit_logit(X, y):
-    """Fit Logit and return (coefs, std_errs, pvalues, pseudo_r2, accuracy, status)."""
-    Xc = sm.add_constant(X, has_constant="add")
-    try:
-        import warnings as _warnings
-        with _warnings.catch_warnings(record=True) as _w:
-            _warnings.simplefilter("always")
-            r = sm.Logit(y, Xc).fit(disp=0, maxiter=200)
-        warned_separation = any(
-            issubclass(w.category, sm.tools.sm_exceptions.PerfectSeparationWarning)
-            for w in _w
-        )
-        warned_hessian = any(
-            issubclass(w.category, sm.tools.sm_exceptions.HessianInversionWarning)
-            for w in _w
-        )
-        bse_nan = np.all(np.isnan(r.bse))
-        if warned_separation or bse_nan:
-            k = Xc.shape[1]
-            nan_k = np.full(k, np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "separation"
-        if warned_hessian:
-            k = Xc.shape[1]
-            nan_k = np.full(k, np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "hessian"
-        if np.any(np.abs(r.params) > 20):
-            k = Xc.shape[1]
-            nan_k = np.full(k, np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "unstable"
-        accuracy = np.mean((r.predict(Xc) >= 0.5).astype(int) == y.astype(int))
-        return r.params, r.bse, r.pvalues, r.prsquared, accuracy, "ok"
-    except sm.tools.sm_exceptions.PerfectSeparationError:
-        k = Xc.shape[1]
-        nan_k = np.full(k, np.nan)
-        return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "separation"
-    except Exception:
-        k = Xc.shape[1]
-        nan_k = np.full(k, np.nan)
-        return nan_k, nan_k.copy(), nan_k.copy(), np.nan, np.nan, "failed"
-
 # ── Index OD files by (var_type, N, p, rho, sig_str) ─────────────────────────
 log_info("Scanning data directories \u2026")
 od_files = sorted(glob.glob(os.path.join(od_dir, "OD_logistic_*.parquet")))
@@ -251,7 +213,6 @@ def _process_one_sd(task):
     """Standalone worker: reads OD + SD, runs OLS per iteration, returns list[dict]."""
     import numpy as _np
     import pandas as _pd
-    import statsmodels.api as _sm
 
     MAX_P_W = 10
 
@@ -259,50 +220,6 @@ def _process_one_sd(task):
         out = _np.full(length, _np.nan)
         out[:len(arr)] = arr
         return out
-
-    def _fit_w(X, y):
-        Xc = _sm.add_constant(X, has_constant="add")
-        try:
-            import warnings as _warnings
-            with _warnings.catch_warnings(record=True) as _w:
-                _warnings.simplefilter("always")
-                r = _sm.Logit(y, Xc).fit(disp=0, maxiter=200)
-            # PerfectSeparation is issued as a Warning (not Error) in most statsmodels versions
-            warned_separation = any(
-                issubclass(w.category, _sm.tools.sm_exceptions.PerfectSeparationWarning)
-                for w in _w
-            )
-            # HessianInversion means SEs are unreliable — coefficients may be extreme
-            warned_hessian = any(
-                issubclass(w.category, _sm.tools.sm_exceptions.HessianInversionWarning)
-                for w in _w
-            )
-            # Hessian inversion failure means bse/pvalues are NaN even if fit "converged"
-            bse_nan = _np.all(_np.isnan(r.bse))
-            if warned_separation or bse_nan:
-                k = Xc.shape[1]
-                nan_k = _np.full(k, _np.nan)
-                return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "separation"
-            if warned_hessian:
-                k = Xc.shape[1]
-                nan_k = _np.full(k, _np.nan)
-                return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "hessian"
-            # Coefficients with extreme magnitude indicate near-separation that
-            # didn't trigger an explicit warning — treat as numerically unstable.
-            if _np.any(_np.abs(r.params) > 20):
-                k = Xc.shape[1]
-                nan_k = _np.full(k, _np.nan)
-                return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "unstable"
-            accuracy = _np.mean((r.predict(Xc) >= 0.5).astype(int) == y.astype(int))
-            return r.params, r.bse, r.pvalues, r.prsquared, accuracy, "ok"
-        except _sm.tools.sm_exceptions.PerfectSeparationError:
-            k = Xc.shape[1]
-            nan_k = _np.full(k, _np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "separation"
-        except Exception:
-            k = Xc.shape[1]
-            nan_k = _np.full(k, _np.nan)
-            return nan_k, nan_k.copy(), nan_k.copy(), _np.nan, _np.nan, "failed"
 
     fp       = task["fp"]
     od_fp    = task["od_fp"]
@@ -334,23 +251,27 @@ def _process_one_sd(task):
         X_sd = sd_grp[x_cols].to_numpy(dtype=_np.float64)
         y_sd = sd_grp["y"].to_numpy(dtype=_np.float64)
 
-        b_od, se_od, pv_od, r2_od, acc_od, status_od = _fit_w(X_od, y_od)
-        b_sd, se_sd, pv_sd, r2_sd, acc_sd, status_sd = _fit_w(X_sd, y_sd)
+        fit_od = fit_logit_with_status(X_od, y_od)
+        fit_sd = fit_logit_with_status(X_sd, y_sd)
 
         row = {
             "x_method": x_method, "y_method": y_method, "var_type": var_type,
             "N": N, "p": p_val, "rho": rho,
             "sigma_2": sigma_out, "iter": int(it),
-            "fit_status_od": status_od, "fit_status_sd": status_sd,
-            "pseudo_r2_od": r2_od, "pseudo_r2_sd": r2_sd,
-            "accuracy_od": acc_od, "accuracy_sd": acc_sd,
+            "fit_status_od": fit_od["status"], "fit_status_sd": fit_sd["status"],
+            "pseudo_r2_od": fit_od["pseudo_r2"], "pseudo_r2_sd": fit_sd["pseudo_r2"],
+            "accuracy_od": fit_od["accuracy"], "accuracy_sd": fit_sd["accuracy"],
+            "attempt_total_od": int(od_grp["attempt_total_od"].iloc[0]) if "attempt_total_od" in od_grp.columns else _np.nan,
+            "attempt_total_sd": int(sd_grp["attempt_total_sd"].iloc[0]) if "attempt_total_sd" in sd_grp.columns else _np.nan,
+            "target_success_od": int(od_grp["target_success_od"].iloc[0]) if "target_success_od" in od_grp.columns else _np.nan,
+            "target_success_sd": int(sd_grp["target_success_sd"].iloc[0]) if "target_success_sd" in sd_grp.columns else _np.nan,
         }
-        for i, v in enumerate(_pad_w(b_od)):  row[f"beta_od_{i}"] = v
-        for i, v in enumerate(_pad_w(b_sd)):  row[f"beta_sd_{i}"] = v
-        for i, v in enumerate(_pad_w(se_od)): row[f"se_od_{i}"]   = v
-        for i, v in enumerate(_pad_w(se_sd)): row[f"se_sd_{i}"]   = v
-        for i, v in enumerate(_pad_w(pv_od)): row[f"pval_od_{i}"] = v
-        for i, v in enumerate(_pad_w(pv_sd)): row[f"pval_sd_{i}"] = v
+        for i, v in enumerate(_pad_w(fit_od["params"])):   row[f"beta_od_{i}"] = v
+        for i, v in enumerate(_pad_w(fit_sd["params"])):   row[f"beta_sd_{i}"] = v
+        for i, v in enumerate(_pad_w(fit_od["bse"])):      row[f"se_od_{i}"]   = v
+        for i, v in enumerate(_pad_w(fit_sd["bse"])):      row[f"se_sd_{i}"]   = v
+        for i, v in enumerate(_pad_w(fit_od["pvalues"])):  row[f"pval_od_{i}"] = v
+        for i, v in enumerate(_pad_w(fit_sd["pvalues"])):  row[f"pval_sd_{i}"] = v
         rows.append(row)
     return rows
 

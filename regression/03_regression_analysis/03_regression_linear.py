@@ -266,6 +266,8 @@ def _process_one_sd(task):
 
     od_groups = {k: v for k, v in od_df.groupby("iter")}
     sd_groups = {k: v for k, v in sd_df.groupby("iter")}
+    od_target_success = len(od_groups)
+    sd_target_success = len(sd_groups)
     del od_df, sd_df
 
     rows = []
@@ -288,6 +290,10 @@ def _process_one_sd(task):
             "sigma_2": sigma_out, "iter": int(it),
             "fit_status_od": status_od, "fit_status_sd": status_sd,
             "adj_r2_od": r2_od, "adj_r2_sd": r2_sd,
+            "attempt_total_od": int(od_target_success),
+            "attempt_total_sd": int(sd_target_success),
+            "target_success_od": int(od_target_success),
+            "target_success_sd": int(sd_target_success),
         }
         for i, v in enumerate(_pad_w(b_od)):  row[f"beta_od_{i}"] = v
         for i, v in enumerate(_pad_w(b_sd)):  row[f"beta_sd_{i}"] = v
