@@ -3,11 +3,39 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from textwrap import dedent
 
-import nbformat
-from nbformat.v4 import new_code_cell, new_markdown_cell, new_notebook
+try:
+    import nbformat
+    from nbformat.v4 import new_code_cell, new_markdown_cell, new_notebook
+except ModuleNotFoundError:  # pragma: no cover - fallback for lean runtime environments
+    nbformat = None
+
+    def new_markdown_cell(source: str):
+        return {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": source,
+        }
+
+    def new_code_cell(source: str):
+        return {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": source,
+        }
+
+    def new_notebook():
+        return {
+            "cells": [],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
 
 
 ROOT = Path(__file__).resolve().parent
@@ -36,9 +64,10 @@ TEMPLATE = [
 
         The visual workflow is:
 
-        1. **PCA + t-SNE** to identify broad patterns.
-        2. **Univariate descriptive analysis** for each factor separately.
-        3. **Cross-analysis by method** using the combined synthesis arm against the remaining factors.
+        1. **Correlation heatmaps** to compare OD and SD dependence structure.
+        2. **PCA + t-SNE** to identify broad patterns.
+        3. **Univariate descriptive analysis** for each factor separately.
+        4. **Cross-analysis by method** using the combined synthesis arm against the remaining factors.
         """
     ),
     code(
@@ -46,6 +75,7 @@ TEMPLATE = [
         # ── Imports & Config ─────────────────────────────────────────────────────────
         import os
         import json
+        import glob
         import warnings
 
         import numpy as np
@@ -186,6 +216,42 @@ TEMPLATE = [
         print(df[["ci_overlap_pct", "bias_ratio", "ci_width_ratio"]].describe().T[["mean", "std", "min", "max"]])
         """
     ),
+    md(
+        """
+        ## Metric and Design Correlation Matrix
+
+        This section summarizes how the main evaluation metrics co-move with the
+        simulation settings and synthesis choices in the branch-level analysis dataframe.
+        It is meant to answer questions such as:
+
+        - How does **CI Overlap (CIO)** move with `N`, `p`, `rho`, and `sigma²`?
+        - Which synthesis methods are associated with higher or lower metric values?
+        - How strongly are the evaluation metrics related to one another?
+
+        The default output includes:
+
+        - a **CIO vs evaluation metrics** heatmap
+        - a **CIO vs design factors** heatmap
+        - the **full heatmap matrix** for the same correlation table
+        - a **macro scenario-level matrix** with explicit level indicators like `p=2`, `p=5`, `p=10`
+
+        To keep the linear and logistic reports directly comparable, this correlation
+        block uses the same shared variable set in both branches.
+        """
+    ),
+    code(
+        """
+        # ── Correlation matrix controls ─────────────────────────────────────────────
+        CORR_METHOD = "spearman"
+        CORR_SHOW_FULL_MATRIX = True
+
+        print("Correlation matrix settings:")
+        print({
+            "method": CORR_METHOD,
+            "show_full_matrix": CORR_SHOW_FULL_MATRIX,
+        })
+        """
+    ),
     code(
         """
         # ── Plot helpers & palettes ──────────────────────────────────────────────────
@@ -313,6 +379,310 @@ TEMPLATE = [
             fig.savefig(out)
             plt.show()
             print(f"Saved -> {out}")
+
+        def _safe_token(value):
+            return str(value).replace(".", "p")
+
+        def _metric_and_factor_frame(data):
+            corr_df = pd.DataFrame(index=data.index)
+
+            metric_spec = [
+                ("ci_overlap_pct", "CIO"),
+                ("log10_bias_ratio", "Bias Ratio\\n(log10)"),
+                ("log10_ci_width_ratio", "CI Width Ratio\\n(log10)"),
+                ("mean_abs_bias_od", "Mean Abs Bias\\nOD"),
+                ("mean_abs_bias_sd", "Mean Abs Bias\\nSD"),
+            ]
+            metric_labels = {col: label for col, label in metric_spec if col in data.columns}
+            metric_cols = [col for col, _ in metric_spec if col in data.columns]
+
+            for col in metric_cols:
+                corr_df[col] = data[col].astype(float)
+
+            factor_labels = {
+                "N": "N",
+                "p": "p",
+                "rho": "rho",
+                "sigma_2": "sigma²",
+                "is_binary_var_type": "Var Type\\n= binary",
+            }
+            for col in ["N", "p", "rho", "sigma_2"]:
+                corr_df[col] = data[col].astype(float)
+
+            corr_df["is_binary_var_type"] = (data["var_type"].astype(str) == "binary").astype(float)
+
+            for method_col, prefix in [("x_method", "X"), ("y_method", "Y")]:
+                levels = sorted(data[method_col].dropna().astype(str).unique())
+                for level in levels[1:]:
+                    dummy_col = f"{method_col}_{level}"
+                    corr_df[dummy_col] = (data[method_col].astype(str) == level).astype(float)
+                    factor_labels[dummy_col] = f"{prefix}={level}"
+
+            factor_cols = [col for col in corr_df.columns if col not in metric_cols]
+            return corr_df, metric_cols, factor_cols, metric_labels, factor_labels
+
+        def _draw_corr_heatmap(matrix, title, out_name, cbar_label):
+            fig_w = max(9.5, 0.9 * len(matrix.columns) + 2.8)
+            fig_h = max(2.4, 1.15 * len(matrix.index) + 1.2)
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+            sns.heatmap(
+                matrix,
+                cmap="RdBu_r",
+                center=0,
+                vmin=-1,
+                vmax=1,
+                annot=True,
+                fmt=".2f",
+                annot_kws={"fontsize": 10, "fontweight": "bold"},
+                linewidths=0.8,
+                linecolor="white",
+                cbar_kws={"shrink": 0.85, "label": cbar_label},
+                ax=ax,
+            )
+            values = matrix.to_numpy(dtype=float).ravel()
+            for text, value in zip(ax.texts, values):
+                text.set_color("white" if abs(value) >= 0.45 else "#1a1a1a")
+
+            ax.set_title(title, fontsize=15, fontweight="bold", pad=10)
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right", rotation_mode="anchor", fontsize=11)
+            ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=11)
+            plt.tight_layout()
+
+            out = os.path.join(fig_dir, out_name)
+            fig.savefig(out)
+            plt.show()
+            print(f"Saved -> {out}")
+            return fig, ax
+
+        def plot_metric_design_correlation(data, method="spearman", show_full_matrix=False):
+            corr_df, metric_cols, factor_cols, metric_labels, factor_labels = _metric_and_factor_frame(data)
+            corr_cols = metric_cols + factor_cols
+            corr_matrix = corr_df[corr_cols].corr(method=method)
+
+            cio_col = "ci_overlap_pct"
+            metric_view = corr_matrix.loc[[cio_col], metric_cols].copy()
+            design_view = corr_matrix.loc[[cio_col], [cio_col] + factor_cols].copy()
+
+            metric_view.index = [metric_labels.get(col, col) for col in metric_view.index]
+            metric_view.columns = [metric_labels.get(col, factor_labels.get(col, col)) for col in metric_view.columns]
+            design_view.index = [metric_labels.get(col, col) for col in design_view.index]
+            design_view.columns = [metric_labels.get(col, factor_labels.get(col, col)) for col in design_view.columns]
+
+            _draw_corr_heatmap(
+                metric_view,
+                f"{TARGET_LABEL} — CIO vs Evaluation Metrics",
+                f"{TARGET_REG}_cio_vs_metrics_correlation_{_safe_token(method)}.png",
+                f"{method.title()} correlation",
+            )
+            _draw_corr_heatmap(
+                design_view,
+                f"{TARGET_LABEL} — CIO vs Design Factors",
+                f"{TARGET_REG}_cio_vs_design_correlation_{_safe_token(method)}.png",
+                f"{method.title()} correlation",
+            )
+
+            full = corr_matrix.copy()
+            full.index = [metric_labels.get(col, factor_labels.get(col, col)) for col in full.index]
+            full.columns = [metric_labels.get(col, factor_labels.get(col, col)) for col in full.columns]
+
+            if show_full_matrix:
+                full_w = max(17, 1.05 * len(full.columns) + 6)
+                full_h = max(10, 0.78 * len(full.index) + 4)
+                fig_full, ax_full = plt.subplots(figsize=(full_w, full_h))
+                sns.heatmap(
+                    full,
+                    cmap="RdBu_r",
+                    center=0,
+                    vmin=-1,
+                    vmax=1,
+                    annot=False,
+                    linewidths=0.4,
+                    linecolor="white",
+                    cbar_kws={"shrink": 0.85, "label": f"{method.title()} correlation"},
+                    ax=ax_full,
+                )
+                ax_full.set_title(f"{TARGET_LABEL} — Full Correlation Matrix", fontsize=15, fontweight="bold")
+                ax_full.set_xticklabels(
+                    ax_full.get_xticklabels(),
+                    rotation=35,
+                    ha="right",
+                    rotation_mode="anchor",
+                    fontsize=12,
+                )
+                ax_full.set_yticklabels(ax_full.get_yticklabels(), rotation=0, fontsize=12)
+                plt.tight_layout()
+
+                out_full = os.path.join(fig_dir, f"{TARGET_REG}_full_correlation_matrix_{_safe_token(method)}.png")
+                fig_full.savefig(out_full)
+                plt.show()
+                print(f"Saved -> {out_full}")
+
+            return metric_view, design_view, full
+
+        def _macro_level_frame(data):
+            macro_df = pd.DataFrame(index=data.index)
+
+            metric_spec = [
+                ("ci_overlap_pct", "CIO"),
+                ("log10_bias_ratio", "Bias Ratio\\n(log10)"),
+                ("log10_ci_width_ratio", "CI Width Ratio\\n(log10)"),
+                ("mean_abs_bias_od", "Mean Abs Bias\\nOD"),
+                ("mean_abs_bias_sd", "Mean Abs Bias\\nSD"),
+            ]
+            macro_labels = {col: label for col, label in metric_spec if col in data.columns}
+            metric_cols = [col for col, _ in metric_spec if col in data.columns]
+            for col in metric_cols:
+                macro_df[col] = data[col].astype(float)
+
+            for n_val in N_VALS:
+                col = f"N__{n_val}"
+                macro_df[col] = (data["N"].astype(float) == float(n_val)).astype(float)
+                macro_labels[col] = f"N={n_val}"
+
+            for p_val in P_VALS:
+                col = f"p__{p_val}"
+                macro_df[col] = (data["p"].astype(float) == float(p_val)).astype(float)
+                macro_labels[col] = f"p={p_val}"
+
+            for rho_val in RHO_VALS:
+                col = f"rho__{rho_val}"
+                macro_df[col] = np.isclose(data["rho"].astype(float), float(rho_val)).astype(float)
+                macro_labels[col] = f"rho={rho_val}"
+
+            for sigma_val in SIGMA2_VALS:
+                col = f"sigma_2__{sigma_val}"
+                macro_df[col] = np.isclose(data["sigma_2"].astype(float), float(sigma_val)).astype(float)
+                macro_labels[col] = f"sigma²={sigma_val}"
+
+            for vt in VAR_TYPES:
+                col = f"var_type__{vt}"
+                macro_df[col] = (data["var_type"].astype(str) == vt).astype(float)
+                macro_labels[col] = f"Var={vt}"
+
+            method_levels = sorted({m.upper() for m in CONT_METHODS + BIN_METHODS})
+            for level in method_levels:
+                x_col = f"x_method__{level}"
+                y_col = f"y_method__{level}"
+                macro_df[x_col] = (data["x_method"].astype(str) == level).astype(float)
+                macro_df[y_col] = (data["y_method"].astype(str) == level).astype(float)
+                macro_labels[x_col] = f"X={level}"
+                macro_labels[y_col] = f"Y={level}"
+
+            keep_cols = [col for col in macro_df.columns if macro_df[col].nunique(dropna=True) > 1]
+            macro_df = macro_df[keep_cols]
+            level_cols = [col for col in macro_df.columns if col not in metric_cols]
+            return macro_df, metric_cols, level_cols, macro_labels
+
+        def plot_macro_scenario_correlation(data, method="spearman", show_full_matrix=True):
+            macro_df, metric_cols, level_cols, macro_labels = _macro_level_frame(data)
+            corr_cols = metric_cols + level_cols
+            corr_matrix = macro_df[corr_cols].corr(method=method)
+
+            cio_col = "ci_overlap_pct"
+            cio_macro = corr_matrix.loc[[cio_col], [cio_col] + level_cols].copy()
+            cio_macro.index = [macro_labels.get(col, col) for col in cio_macro.index]
+            cio_macro.columns = [macro_labels.get(col, col) for col in cio_macro.columns]
+
+            _draw_corr_heatmap(
+                cio_macro,
+                f"{TARGET_LABEL} — CIO vs Scenario Levels (Macro)",
+                f"{TARGET_REG}_cio_vs_macro_levels_correlation_{_safe_token(method)}.png",
+                f"{method.title()} correlation",
+            )
+
+            macro_full = corr_matrix.copy()
+            macro_full.index = [macro_labels.get(col, col) for col in macro_full.index]
+            macro_full.columns = [macro_labels.get(col, col) for col in macro_full.columns]
+
+            if show_full_matrix:
+                full_w = max(24, 1.25 * len(macro_full.columns) + 8)
+                full_h = max(12, 0.88 * len(macro_full.index) + 5)
+                fig_full, ax_full = plt.subplots(figsize=(full_w, full_h))
+                sns.heatmap(
+                    macro_full,
+                    cmap="RdBu_r",
+                    center=0,
+                    vmin=-1,
+                    vmax=1,
+                    annot=False,
+                    linewidths=0.35,
+                    linecolor="white",
+                    cbar_kws={"shrink": 0.85, "label": f"{method.title()} correlation"},
+                    ax=ax_full,
+                )
+                ax_full.set_title(f"{TARGET_LABEL} — Macro Full Correlation Matrix", fontsize=15, fontweight="bold")
+                ax_full.set_xticklabels(
+                    ax_full.get_xticklabels(),
+                    rotation=40,
+                    ha="right",
+                    rotation_mode="anchor",
+                    fontsize=12,
+                )
+                ax_full.set_yticklabels(ax_full.get_yticklabels(), rotation=0, fontsize=12)
+                plt.tight_layout()
+
+                out_full = os.path.join(fig_dir, f"{TARGET_REG}_macro_full_correlation_matrix_{_safe_token(method)}.png")
+                fig_full.savefig(out_full)
+                plt.show()
+                print(f"Saved -> {out_full}")
+
+            return cio_macro, macro_full
+
+        corr_metrics, corr_design, corr_full = plot_metric_design_correlation(
+            df,
+            method=CORR_METHOD,
+            show_full_matrix=CORR_SHOW_FULL_MATRIX,
+        )
+        corr_macro_cio, corr_macro_full = plot_macro_scenario_correlation(
+            df,
+            method=CORR_METHOD,
+            show_full_matrix=CORR_SHOW_FULL_MATRIX,
+        )
+        """
+    ),
+    md(
+        """
+        ## CIO Correlation Ranking
+
+        This table ranks the strongest and weakest associations with **CIO** from the
+        full correlation matrix shown above. The CIO self-correlation is excluded.
+        """
+    ),
+    code(
+        """
+        def summarize_cio_correlations(corr_matrix, top_n=10, anchor="CIO"):
+            cio_corr = (
+                corr_matrix.loc[anchor]
+                .drop(labels=[anchor], errors="ignore")
+                .dropna()
+                .sort_values(ascending=False)
+            )
+
+            highest = cio_corr.head(top_n).reset_index()
+            highest.columns = ["Highest With CIO", "Correlation +"]
+
+            lowest = cio_corr.sort_values(ascending=True).head(top_n).reset_index()
+            lowest.columns = ["Lowest With CIO", "Correlation -"]
+
+            max_len = max(len(highest), len(lowest))
+            highest = highest.reindex(range(max_len))
+            lowest = lowest.reindex(range(max_len))
+            return pd.concat([highest, lowest], axis=1)
+
+        cio_corr_table = summarize_cio_correlations(corr_full, top_n=10, anchor="CIO")
+
+        print("Top 10 highest and lowest correlations with CIO")
+        display(
+            cio_corr_table.style
+                .format({
+                    "Correlation +": "{:.3f}",
+                    "Correlation -": "{:.3f}",
+                })
+                .background_gradient(subset=["Correlation +"], cmap="YlOrRd")
+                .background_gradient(subset=["Correlation -"], cmap="Blues_r")
+                .set_caption(f"{TARGET_LABEL} — Top 10 Highest and Lowest Correlations With CIO")
+        )
         """
     ),
     md(
@@ -480,24 +850,46 @@ def materialize(target_reg: str, label: str, parquet_name: str, filename: str) -
     nb = new_notebook()
     cells = []
     for cell in TEMPLATE:
-        new_cell = nbformat.from_dict(cell)
-        new_cell.source = (
+        new_cell = nbformat.from_dict(cell) if nbformat is not None else dict(cell)
+        source = (
             new_cell.source
+            if nbformat is not None
+            else new_cell["source"]
+        )
+        source = (
+            source
             .replace("__TARGET_REG__", target_reg)
             .replace("__LABEL__", label)
             .replace("__PARQUET__", parquet_name)
             .replace("__TITLE__", f"{label} — Main Report Analysis")
         )
+        if nbformat is not None:
+            new_cell.source = source
+        else:
+            new_cell["source"] = source
         cells.append(new_cell)
 
-    nb.cells = cells
-    nb.metadata["kernelspec"] = {
+    if nbformat is None:
+        nb["cells"] = cells
+        nb_metadata = nb["metadata"]
+    else:
+        nb.cells = cells
+        nb_metadata = nb.metadata
+
+    nb_metadata["kernelspec"] = {
         "display_name": "Python 3",
         "language": "python",
         "name": "python3",
     }
-    nb.metadata["language_info"] = {"name": "python", "version": "3.x"}
-    nbformat.write(nb, ROOT / filename)
+    nb_metadata["language_info"] = {"name": "python", "version": "3.x"}
+
+    out_path = ROOT / filename
+    if nbformat is None:
+        with open(out_path, "w", encoding="utf-8") as handle:
+            json.dump(nb, handle, ensure_ascii=False, indent=1)
+            handle.write("\n")
+    else:
+        nbformat.write(nb, out_path)
 
 
 def main() -> None:
