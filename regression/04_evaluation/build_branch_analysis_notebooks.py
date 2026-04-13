@@ -64,7 +64,7 @@ TEMPLATE = [
 
         The visual workflow is:
 
-        1. **Correlation heatmaps** to compare OD and SD dependence structure.
+        1. **Correlation heatmaps** for the three main metrics against design and method factors.
         2. **PCA + t-SNE** to identify broad patterns.
         3. **Univariate descriptive analysis** for each factor separately.
         4. **Cross-analysis by method** using the combined synthesis arm against the remaining factors.
@@ -195,6 +195,7 @@ TEMPLATE = [
 
         df["ci_overlap_pct"] = np.nanmean(cio, axis=1)
         df["ci_width_ratio"] = np.nanmean(width_ratio, axis=1)
+        df["mean_ci_width_sd"] = np.nanmean(W_sd, axis=1)
 
         od_abs_bias = np.abs(bo - true_slopes)
         sd_abs_bias = np.abs(bs - true_slopes)
@@ -218,15 +219,15 @@ TEMPLATE = [
     ),
     md(
         """
-        ## Metric and Design Correlation Matrix
+        ## Main Metric Correlation Matrix
 
-        This section summarizes how the main evaluation metrics co-move with the
-        simulation settings and synthesis choices in the branch-level analysis dataframe.
-        It is meant to answer questions such as:
+        This section summarizes how the three main evaluation metrics co-move with
+        the simulation settings and synthesis choices in the branch-level analysis
+        dataframe. It is meant to answer questions such as:
 
         - How does **CI Overlap (CIO)** move with `N`, `p`, `rho`, and `sigma²`?
         - Which synthesis methods are associated with higher or lower metric values?
-        - How strongly are the evaluation metrics related to one another?
+        - Which scenario levels such as `p=2`, `p=5`, `p=10` are associated with higher or lower **CIO**?
 
         The default output includes:
 
@@ -235,8 +236,12 @@ TEMPLATE = [
         - the **full heatmap matrix** for the same correlation table
         - a **macro scenario-level matrix** with explicit level indicators like `p=2`, `p=5`, `p=10`
 
-        To keep the linear and logistic reports directly comparable, this correlation
-        block uses the same shared variable set in both branches.
+        Following the latest supervisor guidance, this block uses the same three
+        headline metrics in both branches:
+
+        - **CIO**
+        - **Bias Ratio**
+        - **CI Width Ratio**
         """
     ),
     code(
@@ -383,16 +388,20 @@ TEMPLATE = [
         def _safe_token(value):
             return str(value).replace(".", "p")
 
-        def _metric_and_factor_frame(data):
+        MAIN_METRIC_SPEC = [
+            ("ci_overlap_pct", "CIO"),
+            ("bias_ratio", "Bias Ratio"),
+            ("ci_width_ratio", "CI Width Ratio"),
+        ]
+        SD_DRIVER_METRIC_SPEC = [
+            ("ci_overlap_pct", "CIO"),
+            ("mean_abs_bias_sd", "Mean Abs Bias SD"),
+            ("mean_ci_width_sd", "Mean CI Width SD"),
+        ]
+
+        def _metric_and_factor_frame(data, metric_spec):
             corr_df = pd.DataFrame(index=data.index)
 
-            metric_spec = [
-                ("ci_overlap_pct", "CIO"),
-                ("log10_bias_ratio", "Bias Ratio\\n(log10)"),
-                ("log10_ci_width_ratio", "CI Width Ratio\\n(log10)"),
-                ("mean_abs_bias_od", "Mean Abs Bias\\nOD"),
-                ("mean_abs_bias_sd", "Mean Abs Bias\\nSD"),
-            ]
             metric_labels = {col: label for col, label in metric_spec if col in data.columns}
             metric_cols = [col for col, _ in metric_spec if col in data.columns]
 
@@ -455,8 +464,15 @@ TEMPLATE = [
             print(f"Saved -> {out}")
             return fig, ax
 
-        def plot_metric_design_correlation(data, method="spearman", show_full_matrix=False):
-            corr_df, metric_cols, factor_cols, metric_labels, factor_labels = _metric_and_factor_frame(data)
+        def plot_metric_design_correlation(
+            data,
+            metric_spec,
+            section_key,
+            section_title,
+            method="spearman",
+            show_full_matrix=False,
+        ):
+            corr_df, metric_cols, factor_cols, metric_labels, factor_labels = _metric_and_factor_frame(data, metric_spec)
             corr_cols = metric_cols + factor_cols
             corr_matrix = corr_df[corr_cols].corr(method=method)
 
@@ -471,14 +487,14 @@ TEMPLATE = [
 
             _draw_corr_heatmap(
                 metric_view,
-                f"{TARGET_LABEL} — CIO vs Evaluation Metrics",
-                f"{TARGET_REG}_cio_vs_metrics_correlation_{_safe_token(method)}.png",
+                f"{TARGET_LABEL} — {section_title}: CIO vs Evaluation Metrics",
+                f"{TARGET_REG}_{section_key}_cio_vs_metrics_correlation_{_safe_token(method)}.png",
                 f"{method.title()} correlation",
             )
             _draw_corr_heatmap(
                 design_view,
-                f"{TARGET_LABEL} — CIO vs Design Factors",
-                f"{TARGET_REG}_cio_vs_design_correlation_{_safe_token(method)}.png",
+                f"{TARGET_LABEL} — {section_title}: CIO vs Design Factors",
+                f"{TARGET_REG}_{section_key}_cio_vs_design_correlation_{_safe_token(method)}.png",
                 f"{method.title()} correlation",
             )
 
@@ -502,7 +518,7 @@ TEMPLATE = [
                     cbar_kws={"shrink": 0.85, "label": f"{method.title()} correlation"},
                     ax=ax_full,
                 )
-                ax_full.set_title(f"{TARGET_LABEL} — Full Correlation Matrix", fontsize=15, fontweight="bold")
+                ax_full.set_title(f"{TARGET_LABEL} — {section_title}: Full Correlation Matrix", fontsize=15, fontweight="bold")
                 ax_full.set_xticklabels(
                     ax_full.get_xticklabels(),
                     rotation=35,
@@ -513,23 +529,16 @@ TEMPLATE = [
                 ax_full.set_yticklabels(ax_full.get_yticklabels(), rotation=0, fontsize=12)
                 plt.tight_layout()
 
-                out_full = os.path.join(fig_dir, f"{TARGET_REG}_full_correlation_matrix_{_safe_token(method)}.png")
+                out_full = os.path.join(fig_dir, f"{TARGET_REG}_{section_key}_full_correlation_matrix_{_safe_token(method)}.png")
                 fig_full.savefig(out_full)
                 plt.show()
                 print(f"Saved -> {out_full}")
 
             return metric_view, design_view, full
 
-        def _macro_level_frame(data):
+        def _macro_level_frame(data, metric_spec):
             macro_df = pd.DataFrame(index=data.index)
 
-            metric_spec = [
-                ("ci_overlap_pct", "CIO"),
-                ("log10_bias_ratio", "Bias Ratio\\n(log10)"),
-                ("log10_ci_width_ratio", "CI Width Ratio\\n(log10)"),
-                ("mean_abs_bias_od", "Mean Abs Bias\\nOD"),
-                ("mean_abs_bias_sd", "Mean Abs Bias\\nSD"),
-            ]
             macro_labels = {col: label for col, label in metric_spec if col in data.columns}
             metric_cols = [col for col, _ in metric_spec if col in data.columns]
             for col in metric_cols:
@@ -574,8 +583,15 @@ TEMPLATE = [
             level_cols = [col for col in macro_df.columns if col not in metric_cols]
             return macro_df, metric_cols, level_cols, macro_labels
 
-        def plot_macro_scenario_correlation(data, method="spearman", show_full_matrix=True):
-            macro_df, metric_cols, level_cols, macro_labels = _macro_level_frame(data)
+        def plot_macro_scenario_correlation(
+            data,
+            metric_spec,
+            section_key,
+            section_title,
+            method="spearman",
+            show_full_matrix=True,
+        ):
+            macro_df, metric_cols, level_cols, macro_labels = _macro_level_frame(data, metric_spec)
             corr_cols = metric_cols + level_cols
             corr_matrix = macro_df[corr_cols].corr(method=method)
 
@@ -586,8 +602,8 @@ TEMPLATE = [
 
             _draw_corr_heatmap(
                 cio_macro,
-                f"{TARGET_LABEL} — CIO vs Scenario Levels (Macro)",
-                f"{TARGET_REG}_cio_vs_macro_levels_correlation_{_safe_token(method)}.png",
+                f"{TARGET_LABEL} — {section_title}: CIO vs Scenario Levels (Macro)",
+                f"{TARGET_REG}_{section_key}_cio_vs_macro_levels_correlation_{_safe_token(method)}.png",
                 f"{method.title()} correlation",
             )
 
@@ -611,7 +627,7 @@ TEMPLATE = [
                     cbar_kws={"shrink": 0.85, "label": f"{method.title()} correlation"},
                     ax=ax_full,
                 )
-                ax_full.set_title(f"{TARGET_LABEL} — Macro Full Correlation Matrix", fontsize=15, fontweight="bold")
+                ax_full.set_title(f"{TARGET_LABEL} — {section_title}: Macro Full Correlation Matrix", fontsize=15, fontweight="bold")
                 ax_full.set_xticklabels(
                     ax_full.get_xticklabels(),
                     rotation=40,
@@ -622,7 +638,7 @@ TEMPLATE = [
                 ax_full.set_yticklabels(ax_full.get_yticklabels(), rotation=0, fontsize=12)
                 plt.tight_layout()
 
-                out_full = os.path.join(fig_dir, f"{TARGET_REG}_macro_full_correlation_matrix_{_safe_token(method)}.png")
+                out_full = os.path.join(fig_dir, f"{TARGET_REG}_{section_key}_macro_full_correlation_matrix_{_safe_token(method)}.png")
                 fig_full.savefig(out_full)
                 plt.show()
                 print(f"Saved -> {out_full}")
@@ -631,11 +647,17 @@ TEMPLATE = [
 
         corr_metrics, corr_design, corr_full = plot_metric_design_correlation(
             df,
+            metric_spec=MAIN_METRIC_SPEC,
+            section_key="main",
+            section_title="Main Metrics",
             method=CORR_METHOD,
             show_full_matrix=CORR_SHOW_FULL_MATRIX,
         )
         corr_macro_cio, corr_macro_full = plot_macro_scenario_correlation(
             df,
+            metric_spec=MAIN_METRIC_SPEC,
+            section_key="main",
+            section_title="Main Metrics",
             method=CORR_METHOD,
             show_full_matrix=CORR_SHOW_FULL_MATRIX,
         )
@@ -646,7 +668,7 @@ TEMPLATE = [
         ## CIO Correlation Ranking
 
         This table ranks the strongest and weakest associations with **CIO** from the
-        full correlation matrix shown above. The CIO self-correlation is excluded.
+        macro full correlation matrix shown above. The CIO self-correlation is excluded.
         """
     ),
     code(
@@ -670,7 +692,7 @@ TEMPLATE = [
             lowest = lowest.reindex(range(max_len))
             return pd.concat([highest, lowest], axis=1)
 
-        cio_corr_table = summarize_cio_correlations(corr_full, top_n=10, anchor="CIO")
+        cio_corr_table = summarize_cio_correlations(corr_macro_full, top_n=10, anchor="CIO")
 
         print("Top 10 highest and lowest correlations with CIO")
         display(
@@ -682,6 +704,74 @@ TEMPLATE = [
                 .background_gradient(subset=["Correlation +"], cmap="YlOrRd")
                 .background_gradient(subset=["Correlation -"], cmap="Blues_r")
                 .set_caption(f"{TARGET_LABEL} — Top 10 Highest and Lowest Correlations With CIO")
+        )
+        """
+    ),
+    md(
+        """
+        ## Synthetic-Data Driver Correlation Matrix
+
+        This parallel block focuses on the second analytical question from the
+        supervisor feedback: which factors positively or negatively affect the use
+        of synthetic data in the analysis?
+
+        It uses the SD-specific metric set:
+
+        - **CIO**
+        - **Mean Abs Bias SD**
+        - **Mean CI Width SD**
+
+        The outputs mirror the main metric section:
+
+        - a **CIO vs evaluation metrics** heatmap
+        - a **CIO vs design factors** heatmap
+        - the **full heatmap matrix**
+        - a **macro scenario-level matrix** with explicit scenario indicators
+        """
+    ),
+    code(
+        """
+        sd_driver_metrics, sd_driver_design, sd_driver_full = plot_metric_design_correlation(
+            df,
+            metric_spec=SD_DRIVER_METRIC_SPEC,
+            section_key="sd_driver",
+            section_title="SD Drivers",
+            method=CORR_METHOD,
+            show_full_matrix=CORR_SHOW_FULL_MATRIX,
+        )
+        sd_driver_macro_cio, sd_driver_macro_full = plot_macro_scenario_correlation(
+            df,
+            metric_spec=SD_DRIVER_METRIC_SPEC,
+            section_key="sd_driver",
+            section_title="SD Drivers",
+            method=CORR_METHOD,
+            show_full_matrix=CORR_SHOW_FULL_MATRIX,
+        )
+        """
+    ),
+    md(
+        """
+        ## CIO Correlation Ranking: SD Drivers
+
+        This table ranks the strongest and weakest associations with **CIO** from the
+        SD-driver macro full correlation matrix shown above. The CIO self-correlation
+        is excluded.
+        """
+    ),
+    code(
+        """
+        cio_sd_driver_corr_table = summarize_cio_correlations(sd_driver_macro_full, top_n=10, anchor="CIO")
+
+        print("Top 10 highest and lowest SD-driver correlations with CIO")
+        display(
+            cio_sd_driver_corr_table.style
+                .format({
+                    "Correlation +": "{:.3f}",
+                    "Correlation -": "{:.3f}",
+                })
+                .background_gradient(subset=["Correlation +"], cmap="YlOrRd")
+                .background_gradient(subset=["Correlation -"], cmap="Blues_r")
+                .set_caption(f"{TARGET_LABEL} — SD Drivers: Top 10 Highest and Lowest Correlations With CIO")
         )
         """
     ),
