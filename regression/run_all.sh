@@ -20,21 +20,25 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Check if conda is available
-if ! command -v conda &> /dev/null; then
-    echo "❌ ERROR: conda is not installed or not in PATH"
-    exit 1
-fi
-
-# Activate conda environment
-eval "$(conda shell.bash hook)"
-
-if conda env list | grep -q "synthetic_data"; then
-    conda activate synthetic_data
-    echo "✓ Activated conda environment: synthetic_data"
+# Environment detection: prefer an active venv (uv), otherwise fall back to conda
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+    echo "✓ Using active virtual environment: ${VIRTUAL_ENV}"
+elif command -v conda &> /dev/null; then
+    eval "$(conda shell.bash hook)"
+    if conda env list | grep -q "synthetic_data"; then
+        conda activate synthetic_data
+        echo "✓ Activated conda environment: synthetic_data"
+    else
+        echo "❌ ERROR: conda environment 'synthetic_data' not found"
+        echo "Create it or use uv (from repo root):"
+        echo "  uv venv --python 3.13"
+        echo "  source .venv/bin/activate"
+        echo "  uv pip install -r requirements.txt"
+        exit 1
+    fi
 else
-    echo "❌ ERROR: conda environment 'synthetic_data' not found"
-    echo "Please create it first: conda create -n synthetic_data python=3.13"
+    echo "❌ ERROR: no active virtual environment and conda is not installed"
+    echo "Activate a venv (uv) or install conda."
     exit 1
 fi
 

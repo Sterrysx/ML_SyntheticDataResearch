@@ -1,6 +1,6 @@
-# Setup Guide - Clustering Pipeline
+# Setup Guide - Regression Pipeline
 
-This guide covers setup for the clustering pipeline in clustering/.
+This guide covers setup for the regression pipeline in regression/.
 
 ## Prerequisites
 
@@ -30,23 +30,25 @@ pip install -r ../requirements.txt
 The R scripts auto-install missing packages on first run. To preinstall:
 
 ```bash
-Rscript -e "install.packages(c('jsonlite','mvtnorm','synthpop','arrow'), repos='https://cloud.r-project.org')"
+Rscript -e "install.packages(c('jsonlite','mvtnorm','MultiDiscreteRNG','synthpop','arrow'), repos='https://cloud.r-project.org')"
 ```
 
 ## 4. Run the pipeline
 
 ```bash
-cd clustering
+cd regression
 ./run_all.sh
 ```
 
 ## 5. Outputs to expect
 
 - data/original/OD_*.parquet
-- data/synthetic/SD_cart_*.parquet
-- results/clustering_results.parquet
-- results/clustering_results.csv
-- 04_evaluation/04_evaluate_clustering.ipynb
+- data/synthetic/SD_*.parquet
+- results/aggregated_model_metrics.parquet
+- results/aggregated_logistic_metrics.parquet
+- results/summary_table.csv
+- results/latest_pipeline_timing.json
+- results/latest_sd_timing_breakdown.json
 
 ## Troubleshooting
 
@@ -54,4 +56,4 @@ cd clustering
 - conda env not found: recreate synthetic_data and activate it.
 - Rscript not found: install R and ensure it is on PATH.
 - Permission denied: run chmod +x run_all.sh.
-- Arrow install issues: install system dependencies for Arrow and retry.
+- Long runtimes: reduce simulation.M and/or grid size in config.json.
